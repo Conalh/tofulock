@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "tool": "tofulock",
+  "modules": [
+    {
+      "name": "local_app",
+      "source": "./modules/app",
+      "type": "local",
+      "status": "skipped",
+      "note": "local module; versioned with the root module"
+    },
+    {
+      "name": "network",
+      "source": "github.com/terraform-aws-modules/terraform-aws-s3-bucket?ref=v4.1.2",
+      "type": "git",
+      "constraint": "v4.1.2",
+      "clone_url": "https://github.com/terraform-aws-modules/terraform-aws-s3-bucket",
+      "resolved_commit": "8a0b697adfbc673e6135c70246cff7f8052ad95a",
+      "digest": "git:sha1:8a0b697adfbc673e6135c70246cff7f8052ad95a",
+      "status": "locked"
+    },
+    {
+      "name": "vpc_git",
+      "source": "git::https://github.com/terraform-aws-modules/terraform-aws-vpc.git//?ref=v5.8.1",
+      "type": "git",
+      "constraint": "v5.8.1",
+      "clone_url": "https://github.com/terraform-aws-modules/terraform-aws-vpc.git",
+      "resolved_commit": "25322b6b6be69db6cca7f167d7b0e5327156a595",
+      "digest": "git:sha1:25322b6b6be69db6cca7f167d7b0e5327156a595",
+      "status": "locked"
+    },
+    {
+      "name": "vpc_registry",
+      "source": "terraform-aws-modules/vpc/aws",
+      "type": "registry",
+      "constraint": "5.8.1",
+      "status": "skipped",
+      "note": "registry sources are not lockable yet (see roadmap)"
+    }
+  ]
+}
