@@ -9,9 +9,9 @@ inputs:
     required: false
     default: '.'
   version:
-    description: 'tofulock version (git ref or "latest") to install'
+    description: 'tofulock version to install (a release tag, or a branch like "main")'
     required: false
-    default: 'latest'
+    default: 'main'
   json:
     description: 'Emit machine-readable JSON output'
     required: false
