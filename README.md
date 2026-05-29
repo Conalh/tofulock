@@ -1,5 +1,8 @@
 # tofulock
 
+[![CI](https://github.com/Conalh/tofulock/actions/workflows/ci.yml/badge.svg)](https://github.com/Conalh/tofulock/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **Lock and verify Terraform / OpenTofu *module* sources by content digest.**
 
 `tofulock` closes a documented hole in the Terraform/OpenTofu dependency model:
@@ -74,9 +77,9 @@ downloaded during lock/verify).
 ## Usage
 
 ```sh
-tofulock list   [dir]   # show module calls and their classified source kind
-tofulock lock   [dir]   # resolve git modules to commits, write the lockfile
-tofulock verify [dir]   # re-resolve and fail (exit 1) on any drift
+tofulock list   [dir]            # show module calls and their classified source kind
+tofulock lock   [dir] [--json]   # resolve git & registry modules to commits, write the lockfile
+tofulock verify [dir] [--json]   # re-resolve and fail (exit 1) on any drift
 ```
 
 `dir` defaults to `.`.
@@ -91,10 +94,45 @@ $ tofulock lock ./examples/basic
 wrote .tofulock.lock.json  (3 locked, 1 skipped, 0 error)
 ```
 
-In CI, add a gate:
+## Use in CI
+
+Drop the gate into a GitHub Actions pipeline — fail the build the moment a
+locked module's tag is re-pointed, a branch advances, or a registry constraint
+starts resolving to a new version:
+
+```yaml
+# .github/workflows/module-integrity.yml
+name: module integrity
+on: [pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Conalh/tofulock@main
+        with:
+          directory: .
+```
+
+Or run it directly — `verify` exits non-zero on any drift, and `--json` emits a
+machine-readable report for annotations or dashboards:
 
 ```sh
-tofulock verify .   # exit 1 if any locked module's ref now points elsewhere
+tofulock verify . --json
+```
+
+```json
+{
+  "ok": false,
+  "dir": ".",
+  "checked": 3,
+  "problems": 1,
+  "results": [
+    { "name": "network", "kind": "git", "status": "drift",
+      "pin": "v4.1.2", "locked_commit": "8a0b697…", "current_commit": "deadbee…",
+      "detail": "ref now points to a different commit" }
+  ]
+}
 ```
 
 ## Lockfile

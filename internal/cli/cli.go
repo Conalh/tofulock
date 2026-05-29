@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -14,7 +15,7 @@ import (
 )
 
 // Version is the tofulock release version.
-const Version = "0.2.0-dev"
+const Version = "0.3.0-dev"
 
 // Run dispatches a tofulock subcommand and returns a process exit code.
 func Run(args []string) int {
@@ -23,13 +24,14 @@ func Run(args []string) int {
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
+	dir, jsonOut := parseArgs(rest)
 	switch cmd {
 	case "list":
-		return cmdList(dirArg(rest))
+		return cmdList(dir)
 	case "lock":
-		return cmdLock(dirArg(rest))
+		return cmdLock(dir, jsonOut)
 	case "verify":
-		return cmdVerify(dirArg(rest))
+		return cmdVerify(dir, jsonOut)
 	case "version", "--version", "-v":
 		fmt.Println("tofulock " + Version)
 		return 0
@@ -43,14 +45,22 @@ func Run(args []string) int {
 	}
 }
 
-// dirArg returns the first non-flag argument, defaulting to the current dir.
-func dirArg(rest []string) string {
+// parseArgs extracts the target directory (first non-flag arg, default ".")
+// and whether --json was requested.
+func parseArgs(rest []string) (dir string, jsonOut bool) {
+	dir = "."
+	dirSet := false
 	for _, a := range rest {
-		if !strings.HasPrefix(a, "-") {
-			return a
+		switch a {
+		case "-json", "--json":
+			jsonOut = true
+		default:
+			if !strings.HasPrefix(a, "-") && !dirSet {
+				dir, dirSet = a, true
+			}
 		}
 	}
-	return "."
+	return dir, jsonOut
 }
 
 func cmdList(dir string) int {
@@ -66,14 +76,21 @@ func cmdList(dir string) int {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tTYPE\tVERSION/REF\tSOURCE")
 	for _, c := range calls {
-		kind := resolve.Classify(c.Source)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", c.Name, kind, refOrVersion(c), c.Source)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", c.Name, resolve.Classify(c.Source), refOrVersion(c), c.Source)
 	}
 	_ = w.Flush()
 	return 0
 }
 
-func cmdLock(dir string) int {
+type lockReport struct {
+	Lockfile string            `json:"lockfile"`
+	Locked   int               `json:"locked"`
+	Skipped  int               `json:"skipped"`
+	Errored  int               `json:"errored"`
+	Modules  []lockfile.Module `json:"modules"`
+}
+
+func cmdLock(dir string, jsonOut bool) int {
 	calls, err := tfmod.Discover(dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tofulock:", err)
@@ -91,22 +108,49 @@ func cmdLock(dir string) int {
 		default:
 			skipped++
 		}
-		fmt.Println(statusLine(m))
+		if !jsonOut {
+			fmt.Println(statusLine(m))
+		}
 		f.Modules = append(f.Modules, m)
 	}
 	if err := lockfile.Write(dir, f); err != nil {
 		fmt.Fprintln(os.Stderr, "tofulock:", err)
 		return 1
 	}
-	fmt.Printf("\nwrote %s  (%d locked, %d skipped, %d error)\n",
-		lockfile.FileName, locked, skipped, errored)
+	if jsonOut {
+		emitJSON(lockReport{
+			Lockfile: lockfile.Path(dir), Locked: locked, Skipped: skipped,
+			Errored: errored, Modules: f.Modules,
+		})
+	} else {
+		fmt.Printf("\nwrote %s  (%d locked, %d skipped, %d error)\n",
+			lockfile.FileName, locked, skipped, errored)
+	}
 	if errored > 0 {
 		return 1
 	}
 	return 0
 }
 
-func cmdVerify(dir string) int {
+type verifyEntry struct {
+	Name          string `json:"name"`
+	Kind          string `json:"kind,omitempty"`
+	Status        string `json:"status"` // ok | drift | error | removed | new
+	Pin           string `json:"pin,omitempty"`
+	LockedCommit  string `json:"locked_commit,omitempty"`
+	CurrentCommit string `json:"current_commit,omitempty"`
+	Detail        string `json:"detail,omitempty"`
+}
+
+type verifyReport struct {
+	OK       bool          `json:"ok"`
+	Dir      string        `json:"dir"`
+	Checked  int           `json:"checked"`
+	Problems int           `json:"problems"`
+	Results  []verifyEntry `json:"results"`
+}
+
+func cmdVerify(dir string, jsonOut bool) int {
 	lf, err := lockfile.Read(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "tofulock: cannot read %s: %v\n(hint: run `tofulock lock` first)\n",
@@ -128,52 +172,100 @@ func cmdVerify(dir string) int {
 		stored[m.Name] = true
 	}
 
-	var problems int
+	var entries []verifyEntry
+	var problems, checked int
+
 	for _, want := range lf.Modules {
 		if want.Status != "locked" {
 			continue
 		}
+		checked++
+		e := verifyEntry{Name: want.Name, Kind: want.Type, Pin: pinLabel(want), LockedCommit: want.ResolvedCommit}
 		c, ok := current[want.Name]
 		if !ok {
-			fmt.Printf("  REMOVED %-22s present in lockfile, absent from config\n", want.Name)
+			e.Status, e.Detail = "removed", "present in lockfile, absent from config"
 			problems++
+			entries = append(entries, e)
 			continue
 		}
 		got := lock.Module(c)
 		switch {
 		case got.Status != "locked":
-			fmt.Printf("  ERROR   %-22s %s\n", want.Name, got.Note)
+			e.Status, e.Detail = "error", got.Note
 			problems++
 		case got.Version != want.Version:
-			fmt.Printf("  DRIFT   %-22s constraint now selects %s (locked %s)\n",
-				want.Name, orDash(got.Version), orDash(want.Version))
+			e.Status, e.CurrentCommit = "drift", got.ResolvedCommit
+			e.Detail = fmt.Sprintf("constraint now selects %s (locked %s)", orDash(got.Version), orDash(want.Version))
 			problems++
 		case got.ResolvedCommit != want.ResolvedCommit:
-			fmt.Printf("  DRIFT   %-22s %s\n            locked %s\n            now    %s\n",
-				want.Name, pinLabel(want), want.ResolvedCommit, got.ResolvedCommit)
+			e.Status, e.CurrentCommit = "drift", got.ResolvedCommit
+			e.Detail = "ref now points to a different commit"
 			problems++
 		default:
-			fmt.Printf("  ok      %-22s %s @ %s\n", want.Name, pinLabel(want), short(want.ResolvedCommit))
+			e.Status, e.CurrentCommit = "ok", got.ResolvedCommit
 		}
+		entries = append(entries, e)
 	}
 
-	// Lockable modules added to config but missing from the lockfile.
 	for _, c := range calls {
 		if stored[c.Name] {
 			continue
 		}
 		if lock.Module(c).Status == "locked" {
-			fmt.Printf("  NEW     %-22s in config, missing from lockfile\n", c.Name)
+			entries = append(entries, verifyEntry{
+				Name: c.Name, Kind: string(resolve.Classify(c.Source)),
+				Status: "new", Detail: "in config, missing from lockfile",
+			})
 			problems++
 		}
 	}
 
+	report := verifyReport{OK: problems == 0, Dir: dir, Checked: checked, Problems: problems, Results: entries}
+	if jsonOut {
+		emitJSON(report)
+	} else {
+		renderVerify(entries, problems)
+	}
 	if problems > 0 {
-		fmt.Printf("\nFAIL: %d problem(s). Run `tofulock lock` to update the lockfile.\n", problems)
 		return 1
 	}
-	fmt.Println("\nOK: every locked module matches its recorded pin.")
 	return 0
+}
+
+func renderVerify(entries []verifyEntry, problems int) {
+	for _, e := range entries {
+		switch e.Status {
+		case "ok":
+			fmt.Printf("  ok      %-22s %s @ %s\n", e.Name, e.Pin, short(e.LockedCommit))
+		case "drift":
+			fmt.Printf("  DRIFT   %-22s %s\n", e.Name, e.Pin)
+			if e.LockedCommit != "" && e.CurrentCommit != "" {
+				fmt.Printf("            locked %s\n            now    %s\n", e.LockedCommit, e.CurrentCommit)
+			} else {
+				fmt.Printf("            %s\n", e.Detail)
+			}
+		case "error":
+			fmt.Printf("  ERROR   %-22s %s\n", e.Name, e.Detail)
+		case "removed":
+			fmt.Printf("  REMOVED %-22s %s\n", e.Name, e.Detail)
+		case "new":
+			fmt.Printf("  NEW     %-22s %s\n", e.Name, e.Detail)
+		}
+	}
+	if problems > 0 {
+		fmt.Printf("\nFAIL: %d problem(s). Run `tofulock lock` to update the lockfile.\n", problems)
+	} else {
+		fmt.Println("\nOK: every locked module matches its recorded pin.")
+	}
+}
+
+func emitJSON(v any) {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tofulock: encoding json:", err)
+		return
+	}
+	fmt.Println(string(b))
 }
 
 // statusLine renders a one-line summary of a freshly resolved module.
@@ -231,14 +323,17 @@ func usage(w *os.File) {
 	fmt.Fprintf(w, `tofulock %s — lock & verify Terraform/OpenTofu module sources by digest
 
 USAGE:
-  tofulock <command> [dir]
+  tofulock <command> [dir] [--json]
 
 COMMANDS:
   list      List the module calls found in a config directory
   lock      Resolve module sources to pinned commits and write %s
-  verify    Re-resolve sources and fail on drift from the lockfile
+  verify    Re-resolve sources and fail (exit 1) on drift from the lockfile
   version   Print the version
   help      Show this help
+
+FLAGS:
+  --json    Emit machine-readable JSON (lock, verify) for CI integration
 
 The native .terraform.lock.hcl records provider dependencies only; module
 versions are never pinned. tofulock fills that gap for git and registry

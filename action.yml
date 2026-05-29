@@ -1,0 +1,35 @@
+name: 'tofulock verify'
+description: 'Fail the build if any locked Terraform/OpenTofu module has drifted from its pinned commit.'
+branding:
+  icon: 'lock'
+  color: 'purple'
+inputs:
+  directory:
+    description: 'Directory containing the module config and .tofulock.lock.json'
+    required: false
+    default: '.'
+  version:
+    description: 'tofulock version (git ref or "latest") to install'
+    required: false
+    default: 'latest'
+  json:
+    description: 'Emit machine-readable JSON output'
+    required: false
+    default: 'false'
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+    - name: Install tofulock
+      shell: bash
+      run: go install github.com/Conalh/tofulock@${{ inputs.version }}
+    - name: Verify module integrity
+      shell: bash
+      run: |
+        if [ "${{ inputs.json }}" = "true" ]; then
+          tofulock verify "${{ inputs.directory }}" --json
+        else
+          tofulock verify "${{ inputs.directory }}"
+        fi
