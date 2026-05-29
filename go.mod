@@ -1,6 +1,6 @@
 module github.com/Conalh/tofulock
 
-go 1.26.3
+go 1.23
 
 require (
 	github.com/hashicorp/go-version v1.9.0

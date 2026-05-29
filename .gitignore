@@ -14,8 +14,8 @@ coverage.*
 # Signed DSSE envelopes (regenerable; unsigned tofulock.attestation.json is committed as an example)
 *.dsse.json
 
-# Local diligence / business notes
-/docs/diligence/
+# Local adoption-feedback notes (not part of the public repo)
+/docs/feedback/
 
 # Editor / OS
 .DS_Store

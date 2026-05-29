@@ -20,7 +20,7 @@ import (
 )
 
 // Version is the tofulock release version.
-const Version = "0.4.0-dev"
+const Version = "0.4.0"
 
 // Default attestation filenames.
 const (
