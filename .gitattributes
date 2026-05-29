@@ -1,0 +1,5 @@
+# Normalize line endings to LF in the repository for cross-platform consistency.
+* text=auto eol=lf
+
+# Binary artifacts
+*.exe binary
