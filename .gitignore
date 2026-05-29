@@ -8,6 +8,15 @@
 *.out
 coverage.*
 
+# Attestation signing keys — never commit
+*.key
+*.pub
+# Signed DSSE envelopes (regenerable; unsigned tofulock.attestation.json is committed as an example)
+*.dsse.json
+
+# Local diligence / business notes
+/docs/diligence/
+
 # Editor / OS
 .DS_Store
 .idea/

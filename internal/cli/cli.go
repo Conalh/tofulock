@@ -2,12 +2,17 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
+	"github.com/Conalh/tofulock/internal/attest"
 	"github.com/Conalh/tofulock/internal/lock"
 	"github.com/Conalh/tofulock/internal/lockfile"
 	"github.com/Conalh/tofulock/internal/resolve"
@@ -15,7 +20,13 @@ import (
 )
 
 // Version is the tofulock release version.
-const Version = "0.3.0-dev"
+const Version = "0.4.0-dev"
+
+// Default attestation filenames.
+const (
+	attestFile = "tofulock.attestation.json"
+	dsseFile   = "tofulock.attestation.dsse.json"
+)
 
 // Run dispatches a tofulock subcommand and returns a process exit code.
 func Run(args []string) int {
@@ -24,14 +35,22 @@ func Run(args []string) int {
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
-	dir, jsonOut := parseArgs(rest)
 	switch cmd {
 	case "list":
+		dir, _ := parseArgs(rest)
 		return cmdList(dir)
 	case "lock":
+		dir, jsonOut := parseArgs(rest)
 		return cmdLock(dir, jsonOut)
 	case "verify":
+		dir, jsonOut := parseArgs(rest)
 		return cmdVerify(dir, jsonOut)
+	case "attest":
+		return cmdAttest(rest)
+	case "verify-attest":
+		return cmdVerifyAttest(rest)
+	case "keygen":
+		return cmdKeygen(rest)
 	case "version", "--version", "-v":
 		fmt.Println("tofulock " + Version)
 		return 0
@@ -46,7 +65,7 @@ func Run(args []string) int {
 }
 
 // parseArgs extracts the target directory (first non-flag arg, default ".")
-// and whether --json was requested.
+// and whether --json was requested. Used by list/lock/verify.
 func parseArgs(rest []string) (dir string, jsonOut bool) {
 	dir = "."
 	dirSet := false
@@ -61,6 +80,32 @@ func parseArgs(rest []string) (dir string, jsonOut bool) {
 		}
 	}
 	return dir, jsonOut
+}
+
+// splitDir separates the optional positional directory from flag args so flags
+// may appear before or after the directory (Go's flag package otherwise stops
+// parsing at the first positional). valueFlags lists flags that consume a value.
+func splitDir(rest []string, valueFlags map[string]bool) (dir string, flags []string) {
+	dir = "."
+	dirSet := false
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		if strings.HasPrefix(a, "-") {
+			flags = append(flags, a)
+			if !strings.Contains(a, "=") {
+				name := strings.TrimLeft(a, "-")
+				if valueFlags[name] && i+1 < len(rest) {
+					flags = append(flags, rest[i+1])
+					i++
+				}
+			}
+			continue
+		}
+		if !dirSet {
+			dir, dirSet = a, true
+		}
+	}
+	return dir, flags
 }
 
 func cmdList(dir string) int {
@@ -232,6 +277,194 @@ func cmdVerify(dir string, jsonOut bool) int {
 	return 0
 }
 
+func cmdAttest(rest []string) int {
+	dir, flagArgs := splitDir(rest, map[string]bool{"key": true, "out": true, "approved-by": true})
+	fs := flag.NewFlagSet("attest", flag.ContinueOnError)
+	keyPath := fs.String("key", "", "ed25519 private key (PEM) to sign a DSSE envelope; unsigned statement if omitted")
+	outPath := fs.String("out", "", "write output to this file instead of stdout")
+	approvedBy := fs.String("approved-by", "", "identity recorded as the approver in the attestation")
+	if err := fs.Parse(flagArgs); err != nil {
+		return 2
+	}
+
+	lf, err := lockfile.Read(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tofulock: cannot read %s: %v\n(hint: run `tofulock lock` first)\n", lockfile.FileName, err)
+		return 1
+	}
+	raw, err := os.ReadFile(lockfile.Path(dir))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tofulock:", err)
+		return 1
+	}
+	stmt := attest.BuildStatement(lf, raw, Version, *approvedBy)
+	stmtBytes, err := attest.Marshal(stmt)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tofulock:", err)
+		return 1
+	}
+
+	out := stmtBytes
+	signed := false
+	if *keyPath != "" {
+		priv, err := attest.ParsePrivatePEM(mustRead(*keyPath))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "tofulock: loading signing key: %v\n", err)
+			return 1
+		}
+		env := attest.Sign(stmtBytes, priv)
+		if out, err = attest.Marshal(env); err != nil {
+			fmt.Fprintln(os.Stderr, "tofulock:", err)
+			return 1
+		}
+		signed = true
+	}
+
+	if *outPath == "" {
+		fmt.Println(string(out))
+		return 0
+	}
+	if err := os.WriteFile(*outPath, append(out, '\n'), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "tofulock:", err)
+		return 1
+	}
+	kind := "attestation"
+	if signed {
+		kind = "signed attestation"
+	}
+	fmt.Fprintf(os.Stderr, "wrote %s %s (%d subjects)\n", kind, *outPath, len(stmt.Subject))
+	return 0
+}
+
+func cmdVerifyAttest(rest []string) int {
+	dir, flagArgs := splitDir(rest, map[string]bool{"key": true, "att": true})
+	fs := flag.NewFlagSet("verify-attest", flag.ContinueOnError)
+	keyPath := fs.String("key", "", "ed25519 public key (PEM) to verify the DSSE signature (required)")
+	attPath := fs.String("att", "", "attestation envelope file (default: <dir>/"+dsseFile+")")
+	if err := fs.Parse(flagArgs); err != nil {
+		return 2
+	}
+	if *keyPath == "" {
+		fmt.Fprintln(os.Stderr, "tofulock: --key (public key PEM) is required")
+		return 2
+	}
+	envPath := *attPath
+	if envPath == "" {
+		envPath = filepath.Join(dir, dsseFile)
+	}
+
+	pub, err := attest.ParsePublicPEM(mustRead(*keyPath))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tofulock: loading public key: %v\n", err)
+		return 1
+	}
+	envBytes, err := os.ReadFile(envPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tofulock: reading attestation %s: %v\n", envPath, err)
+		return 1
+	}
+	var env attest.Envelope
+	if err := json.Unmarshal(envBytes, &env); err != nil {
+		fmt.Fprintf(os.Stderr, "tofulock: parsing attestation: %v\n", err)
+		return 1
+	}
+	payload, err := env.Verify(pub)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tofulock: signature check FAILED: %v\n", err)
+		return 1
+	}
+	var stmt attest.Statement
+	if err := json.Unmarshal(payload, &stmt); err != nil {
+		fmt.Fprintf(os.Stderr, "tofulock: parsing statement: %v\n", err)
+		return 1
+	}
+	fmt.Println("  signature ok")
+
+	lf, err := lockfile.Read(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tofulock: cannot read %s: %v\n", lockfile.FileName, err)
+		return 1
+	}
+	locked := make(map[string]string, len(lf.Modules))
+	for _, m := range lf.Modules {
+		if m.Status == "locked" {
+			locked[m.Name] = m.ResolvedCommit
+		}
+	}
+
+	problems := 0
+	if raw, err := os.ReadFile(lockfile.Path(dir)); err == nil {
+		sum := sha256.Sum256(raw)
+		cur := "sha256:" + hex.EncodeToString(sum[:])
+		if stmt.Predicate.LockfileSHA256 != "" && stmt.Predicate.LockfileSHA256 != cur {
+			fmt.Println("  CHANGED   lockfile digest differs from the attestation")
+			problems++
+		}
+	}
+	for _, s := range stmt.Subject {
+		want := s.Digest["gitCommit"]
+		got, ok := locked[s.Name]
+		switch {
+		case !ok:
+			fmt.Printf("  MISSING   %-22s attested module no longer locked in config\n", s.Name)
+			problems++
+		case got != want:
+			fmt.Printf("  MISMATCH  %-22s attested %s, lockfile %s\n", s.Name, short(want), short(got))
+			problems++
+		default:
+			fmt.Printf("  ok        %-22s %s\n", s.Name, short(want))
+		}
+	}
+	if problems > 0 {
+		fmt.Printf("\nFAIL: signature valid but %d subject/lockfile problem(s).\n", problems)
+		return 1
+	}
+	fmt.Printf("\nOK: signature valid and all %d attested subjects match the lockfile.\n", len(stmt.Subject))
+	return 0
+}
+
+func cmdKeygen(rest []string) int {
+	fs := flag.NewFlagSet("keygen", flag.ContinueOnError)
+	out := fs.String("out", "tofulock", "output key path prefix (writes <prefix>.key and <prefix>.pub)")
+	if err := fs.Parse(rest); err != nil {
+		return 2
+	}
+	priv, pub, err := attest.GenerateKey()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tofulock:", err)
+		return 1
+	}
+	privPEM, err := attest.EncodePrivatePEM(priv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tofulock:", err)
+		return 1
+	}
+	pubPEM, err := attest.EncodePublicPEM(pub)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tofulock:", err)
+		return 1
+	}
+	privFile, pubFile := *out+".key", *out+".pub"
+	if err := os.WriteFile(privFile, privPEM, 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, "tofulock:", err)
+		return 1
+	}
+	if err := os.WriteFile(pubFile, pubPEM, 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "tofulock:", err)
+		return 1
+	}
+	fmt.Printf("wrote %s (private, keep secret) and %s (public)\n", privFile, pubFile)
+	return 0
+}
+
+func mustRead(path string) []byte {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil // ParsePEM will surface a clear "no PEM block" error
+	}
+	return b
+}
+
 func renderVerify(entries []verifyEntry, problems int) {
 	for _, e := range entries {
 		switch e.Status {
@@ -320,24 +553,31 @@ func short(sha string) string {
 }
 
 func usage(w *os.File) {
-	fmt.Fprintf(w, `tofulock %s — lock & verify Terraform/OpenTofu module sources by digest
+	fmt.Fprintf(w, `tofulock %s — lock, verify & attest Terraform/OpenTofu module sources
 
 USAGE:
-  tofulock <command> [dir] [--json]
+  tofulock <command> [dir] [flags]
 
 COMMANDS:
-  list      List the module calls found in a config directory
-  lock      Resolve module sources to pinned commits and write %s
-  verify    Re-resolve sources and fail (exit 1) on drift from the lockfile
-  version   Print the version
-  help      Show this help
+  list             List the module calls found in a config directory
+  lock             Resolve module sources to pinned commits and write %s
+  verify           Re-resolve sources and fail (exit 1) on drift from the lockfile
+  attest           Emit an in-toto module-provenance statement (DSSE-signed with --key)
+  verify-attest    Verify a signed attestation and that its subjects match the lockfile
+  keygen           Generate an ed25519 keypair for signing attestations
+  version          Print the version
+  help             Show this help
 
 FLAGS:
-  --json    Emit machine-readable JSON (lock, verify) for CI integration
+  --json                 Machine-readable output (lock, verify)
+  --key PATH             Signing/verifying key (attest, verify-attest)
+  --out PATH             Output file (attest, keygen prefix)
+  --approved-by NAME     Approver identity recorded in the attestation (attest)
+  --att PATH             Attestation envelope to verify (verify-attest)
 
 The native .terraform.lock.hcl records provider dependencies only; module
-versions are never pinned. tofulock fills that gap for git and registry
-sources, pinning each to a commit.
+versions are never pinned. tofulock pins git and registry modules to a commit
+and can emit a signed, audit-grade provenance record over them.
 
   dir defaults to "." when omitted.
 `, Version, lockfile.FileName)

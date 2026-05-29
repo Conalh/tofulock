@@ -36,3 +36,8 @@ jobs:
         run: go build -o tofulock .
       - name: verify example modules (self-dogfood)
         run: ./tofulock verify ./examples/basic
+      - name: attest + verify-attest (self-dogfood)
+        run: |
+          ./tofulock keygen --out ci
+          ./tofulock attest ./examples/basic --key ci.key --out ci.dsse.json --approved-by ci@tofulock
+          ./tofulock verify-attest ./examples/basic --key ci.pub --att ci.dsse.json

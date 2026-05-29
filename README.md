@@ -80,6 +80,9 @@ downloaded during lock/verify).
 tofulock list   [dir]            # show module calls and their classified source kind
 tofulock lock   [dir] [--json]   # resolve git & registry modules to commits, write the lockfile
 tofulock verify [dir] [--json]   # re-resolve and fail (exit 1) on any drift
+tofulock attest [dir] --key K    # emit a signed in-toto module-provenance record
+tofulock verify-attest [dir] --key K.pub   # verify a signed attestation against the lockfile
+tofulock keygen --out signer     # generate an ed25519 signing keypair
 ```
 
 `dir` defaults to `.`.
@@ -135,6 +138,33 @@ tofulock verify . --json
 }
 ```
 
+## Attestation
+
+Beyond locking, tofulock emits a signed, audit-grade **module-provenance record**:
+an [in-toto](https://in-toto.io) statement with one subject per pinned module
+(digested by git commit), wrapped in a DSSE envelope and signed with ed25519. The
+format is compatible with cosign / Sigstore / Rekor, so keyless transparency-log
+signing is a drop-in next step rather than a rewrite.
+
+```sh
+tofulock keygen --out signer                         # signer.key (secret) + signer.pub
+tofulock attest . --key signer.key \
+  --approved-by you@example.com \
+  --out tofulock.attestation.dsse.json               # signed DSSE envelope
+tofulock verify-attest . --key signer.pub \
+  --att tofulock.attestation.dsse.json               # verify signature + subjects vs lockfile
+```
+
+`verify-attest` confirms the signature **and** that every attested commit still
+matches the current lockfile (and that the lockfile's SHA-256 is unchanged) —
+exiting non-zero otherwise. Omit `--key` on `attest` to print the unsigned
+in-toto statement (committed example:
+[`examples/basic/tofulock.attestation.json`](examples/basic/tofulock.attestation.json)).
+
+The predicate records the resolved module set, a SHA-256 over the lockfile, the
+approver, and a mapping to the change-management controls it evidences — SOC2
+CC8.1, FedRAMP CM-3/CM-4, PCI DSS 6.5.1.
+
 ## Lockfile
 
 `.tofulock.lock.json` is sorted by module name and timestamp-free, so it is
@@ -175,16 +205,19 @@ main.go
    ├─ resolve/    source classification + git ref → commit resolution
    ├─ registry/   Module Registry Protocol: discovery, version select, download
    ├─ lock/       resolution engine shared by lock and verify
-   └─ lockfile/   deterministic lockfile read/write
+   ├─ lockfile/   deterministic lockfile read/write
+   └─ attest/     in-toto statement + DSSE envelope + ed25519 signing
 ```
 
 ## Roadmap
 
+- Keyless signing via Sigstore/Fulcio with Rekor transparency-log inclusion.
+- Cross-tool coverage: Terragrunt and OCI (`oci://`) module sources, so the
+  provenance layer spans Terraform, OpenTofu, and Terragrunt.
 - Non-git-backed registry & archive sources (`s3::`, `gcs::`, `https://….zip`)
   via downloaded content hash.
 - HCL (`.hcl`) lockfile output alongside JSON.
-- `--ci` / machine-readable output and a GitHub Action.
-- Policy gate: allowlists, source-host pinning, attestation export for audit.
+- Policy gate: approved-module allowlists and source-host pinning.
 
 ## License
 
