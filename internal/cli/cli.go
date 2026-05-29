@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/Conalh/tofulock/internal/lock"
 	"github.com/Conalh/tofulock/internal/lockfile"
 	"github.com/Conalh/tofulock/internal/resolve"
+	"github.com/Conalh/tofulock/internal/terragrunt"
 	"github.com/Conalh/tofulock/internal/tfmod"
 )
 
@@ -108,8 +110,24 @@ func splitDir(rest []string, valueFlags map[string]bool) (dir string, flags []st
 	return dir, flags
 }
 
-func cmdList(dir string) int {
+// discoverAll combines Terraform/OpenTofu module calls with any Terragrunt
+// terraform{} source in the directory, sorted by name for determinism.
+func discoverAll(dir string) ([]tfmod.Call, error) {
 	calls, err := tfmod.Discover(dir)
+	if err != nil {
+		return nil, err
+	}
+	tg, err := terragrunt.Discover(dir)
+	if err != nil {
+		return nil, err
+	}
+	calls = append(calls, tg...)
+	sort.Slice(calls, func(i, j int) bool { return calls[i].Name < calls[j].Name })
+	return calls, nil
+}
+
+func cmdList(dir string) int {
+	calls, err := discoverAll(dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tofulock:", err)
 		return 1
@@ -136,7 +154,7 @@ type lockReport struct {
 }
 
 func cmdLock(dir string, jsonOut bool) int {
-	calls, err := tfmod.Discover(dir)
+	calls, err := discoverAll(dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tofulock:", err)
 		return 1
@@ -202,7 +220,7 @@ func cmdVerify(dir string, jsonOut bool) int {
 			lockfile.FileName, err)
 		return 1
 	}
-	calls, err := tfmod.Discover(dir)
+	calls, err := discoverAll(dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tofulock:", err)
 		return 1

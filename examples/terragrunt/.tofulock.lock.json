@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "tool": "tofulock",
+  "modules": [
+    {
+      "name": "terragrunt",
+      "source": "git::https://github.com/terraform-aws-modules/terraform-aws-vpc.git//?ref=v5.8.1",
+      "type": "git",
+      "constraint": "v5.8.1",
+      "clone_url": "https://github.com/terraform-aws-modules/terraform-aws-vpc.git",
+      "resolved_commit": "25322b6b6be69db6cca7f167d7b0e5327156a595",
+      "digest": "git:sha1:25322b6b6be69db6cca7f167d7b0e5327156a595",
+      "status": "locked"
+    }
+  ]
+}

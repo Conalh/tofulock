@@ -155,6 +155,12 @@ up the bulk of the public registry. `verify` flags two kinds of registry drift:
 the constraint now selecting a newer version, and a published version being
 re-pointed to a different commit.
 
+**Terragrunt:** a `terragrunt.hcl` `terraform { source = … }` block is
+discovered and locked/verified/attested like any module — git and `tfr://`
+registry sources resolve normally; an interpolated source (`${local.…}`) is
+reported as unresolvable rather than silently skipped. See
+[`examples/terragrunt`](examples/terragrunt).
+
 ## Lockfile
 
 `.tofulock.lock.json` is sorted by module name and timestamp-free, so it is
@@ -192,6 +198,7 @@ main.go
 └─ internal/
    ├─ cli/        command dispatch (list / lock / verify / attest / …)
    ├─ tfmod/      module-call discovery via terraform-config-inspect
+   ├─ terragrunt/ terragrunt.hcl terraform{} source discovery
    ├─ resolve/    source classification + git ref → commit resolution
    ├─ registry/   Module Registry Protocol: discovery, version select, download
    ├─ lock/       resolution engine shared by lock and verify
@@ -204,7 +211,6 @@ See [THREAT_MODEL.md](THREAT_MODEL.md) for the trust assumptions and
 
 ## Roadmap
 
-- **Terragrunt** module sources (`terragrunt.hcl` `terraform { source }`).
 - **OCI** (`oci://`) module sources.
 - **Keyless signing** via Sigstore/Fulcio with Rekor transparency-log inclusion.
 - Non-git registry & archive sources (`s3::`, `gcs::`, `https://….zip`) via

@@ -41,3 +41,5 @@ jobs:
           ./tofulock keygen --out ci
           ./tofulock attest ./examples/basic --key ci.key --out ci.dsse.json --approved-by ci@tofulock
           ./tofulock verify-attest ./examples/basic --key ci.pub --att ci.dsse.json
+      - name: verify terragrunt example (self-dogfood)
+        run: ./tofulock verify ./examples/terragrunt
