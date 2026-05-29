@@ -7,13 +7,14 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/Conalh/tofulock/internal/lock"
 	"github.com/Conalh/tofulock/internal/lockfile"
 	"github.com/Conalh/tofulock/internal/resolve"
 	"github.com/Conalh/tofulock/internal/tfmod"
 )
 
 // Version is the tofulock release version.
-const Version = "0.1.0-dev"
+const Version = "0.2.0-dev"
 
 // Run dispatches a tofulock subcommand and returns a process exit code.
 func Run(args []string) int {
@@ -81,43 +82,16 @@ func cmdLock(dir string) int {
 	f := &lockfile.File{}
 	var locked, skipped, errored int
 	for _, c := range calls {
-		m := lockfile.Module{Name: c.Name, Source: c.Source}
-		kind := resolve.Classify(c.Source)
-		m.Type = string(kind)
-		switch kind {
-		case resolve.KindGit:
-			gs, perr := resolve.ParseGit(c.Source)
-			if perr != nil {
-				m.Status, m.Note = "error", perr.Error()
-				errored++
-				fmt.Printf("  error   %-22s %v\n", c.Name, perr)
-				break
-			}
-			m.CloneURL, m.Subdir, m.Constraint = gs.CloneURL, gs.Subdir, gs.Ref
-			sha, rerr := resolve.GitCommit(gs.CloneURL, gs.Ref)
-			if rerr != nil {
-				m.Status, m.Note = "error", rerr.Error()
-				errored++
-				fmt.Printf("  error   %-22s %v\n", c.Name, rerr)
-				break
-			}
-			m.ResolvedCommit = sha
-			m.Digest = "git:sha1:" + sha
-			m.Status = "locked"
+		m := lock.Module(c)
+		switch m.Status {
+		case "locked":
 			locked++
-			fmt.Printf("  locked  %-22s %s @ %s\n", c.Name, displayRef(gs.Ref), short(sha))
-		case resolve.KindLocal:
-			m.Status = "skipped"
-			m.Note = "local module; versioned with the root module"
-			skipped++
-			fmt.Printf("  skip    %-22s (local)\n", c.Name)
+		case "error":
+			errored++
 		default:
-			m.Status = "skipped"
-			m.Constraint = c.Version
-			m.Note = fmt.Sprintf("%s sources are not lockable yet (see roadmap)", kind)
 			skipped++
-			fmt.Printf("  skip    %-22s (%s, not lockable yet)\n", c.Name, kind)
 		}
+		fmt.Println(statusLine(m))
 		f.Modules = append(f.Modules, m)
 	}
 	if err := lockfile.Write(dir, f); err != nil {
@@ -149,48 +123,46 @@ func cmdVerify(dir string) int {
 	for _, c := range calls {
 		current[c.Name] = c
 	}
-	inLock := make(map[string]bool, len(lf.Modules))
+	stored := make(map[string]bool, len(lf.Modules))
 	for _, m := range lf.Modules {
-		inLock[m.Name] = true
+		stored[m.Name] = true
 	}
 
 	var problems int
-	for _, m := range lf.Modules {
-		if m.Status != "locked" {
+	for _, want := range lf.Modules {
+		if want.Status != "locked" {
 			continue
 		}
-		c, ok := current[m.Name]
+		c, ok := current[want.Name]
 		if !ok {
-			fmt.Printf("  REMOVED %-22s present in lockfile, absent from config\n", m.Name)
+			fmt.Printf("  REMOVED %-22s present in lockfile, absent from config\n", want.Name)
 			problems++
 			continue
 		}
-		gs, perr := resolve.ParseGit(c.Source)
-		if perr != nil {
-			fmt.Printf("  ERROR   %-22s %v\n", m.Name, perr)
+		got := lock.Module(c)
+		switch {
+		case got.Status != "locked":
+			fmt.Printf("  ERROR   %-22s %s\n", want.Name, got.Note)
 			problems++
-			continue
-		}
-		sha, rerr := resolve.GitCommit(gs.CloneURL, gs.Ref)
-		if rerr != nil {
-			fmt.Printf("  ERROR   %-22s %v\n", m.Name, rerr)
+		case got.Version != want.Version:
+			fmt.Printf("  DRIFT   %-22s constraint now selects %s (locked %s)\n",
+				want.Name, orDash(got.Version), orDash(want.Version))
 			problems++
-			continue
-		}
-		if sha != m.ResolvedCommit {
+		case got.ResolvedCommit != want.ResolvedCommit:
 			fmt.Printf("  DRIFT   %-22s %s\n            locked %s\n            now    %s\n",
-				m.Name, displayRef(gs.Ref), m.ResolvedCommit, sha)
+				want.Name, pinLabel(want), want.ResolvedCommit, got.ResolvedCommit)
 			problems++
-			continue
+		default:
+			fmt.Printf("  ok      %-22s %s @ %s\n", want.Name, pinLabel(want), short(want.ResolvedCommit))
 		}
-		fmt.Printf("  ok      %-22s %s @ %s\n", m.Name, displayRef(gs.Ref), short(sha))
 	}
-	// Lockable modules added to config but never locked.
+
+	// Lockable modules added to config but missing from the lockfile.
 	for _, c := range calls {
-		if inLock[c.Name] {
+		if stored[c.Name] {
 			continue
 		}
-		if resolve.Classify(c.Source) == resolve.KindGit {
+		if lock.Module(c).Status == "locked" {
 			fmt.Printf("  NEW     %-22s in config, missing from lockfile\n", c.Name)
 			problems++
 		}
@@ -200,8 +172,35 @@ func cmdVerify(dir string) int {
 		fmt.Printf("\nFAIL: %d problem(s). Run `tofulock lock` to update the lockfile.\n", problems)
 		return 1
 	}
-	fmt.Println("\nOK: every locked module matches its recorded commit.")
+	fmt.Println("\nOK: every locked module matches its recorded pin.")
 	return 0
+}
+
+// statusLine renders a one-line summary of a freshly resolved module.
+func statusLine(m lockfile.Module) string {
+	switch m.Status {
+	case "locked":
+		return fmt.Sprintf("  locked  %-22s %s @ %s", m.Name, pinLabel(m), short(m.ResolvedCommit))
+	case "error":
+		return fmt.Sprintf("  error   %-22s %s", m.Name, m.Note)
+	default:
+		return fmt.Sprintf("  skip    %-22s (%s)", m.Name, m.Type)
+	}
+}
+
+// pinLabel describes what a locked module is pinned to: a resolved registry
+// version, or a git ref.
+func pinLabel(m lockfile.Module) string {
+	if m.Version != "" {
+		if m.Constraint != "" && m.Constraint != m.Version {
+			return m.Constraint + " => " + m.Version
+		}
+		return m.Version
+	}
+	if m.Constraint == "" {
+		return "(default branch)"
+	}
+	return m.Constraint
 }
 
 func refOrVersion(c tfmod.Call) string {
@@ -214,11 +213,11 @@ func refOrVersion(c tfmod.Call) string {
 	return "-"
 }
 
-func displayRef(ref string) string {
-	if ref == "" {
-		return "(default branch)"
+func orDash(s string) string {
+	if s == "" {
+		return "-"
 	}
-	return ref
+	return s
 }
 
 func short(sha string) string {
@@ -242,8 +241,8 @@ COMMANDS:
   help      Show this help
 
 The native .terraform.lock.hcl records provider dependencies only; module
-versions are never pinned. tofulock fills that gap for git-sourced modules
-today, with registry/archive sources on the roadmap.
+versions are never pinned. tofulock fills that gap for git and registry
+sources, pinning each to a commit.
 
   dir defaults to "." when omitted.
 `, Version, lockfile.FileName)

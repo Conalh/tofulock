@@ -29,6 +29,7 @@ type Module struct {
 	Source         string `json:"source"`
 	Type           string `json:"type"`             // git | registry | local | archive | other
 	Constraint     string `json:"constraint,omitempty"`
+	Version        string `json:"version,omitempty"` // resolved exact version (registry sources)
 	CloneURL       string `json:"clone_url,omitempty"`
 	Subdir         string `json:"subdir,omitempty"`
 	ResolvedCommit string `json:"resolved_commit,omitempty"`

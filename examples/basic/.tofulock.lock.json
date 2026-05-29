@@ -34,8 +34,11 @@
       "source": "terraform-aws-modules/vpc/aws",
       "type": "registry",
       "constraint": "5.8.1",
-      "status": "skipped",
-      "note": "registry sources are not lockable yet (see roadmap)"
+      "version": "5.8.1",
+      "clone_url": "https://github.com/terraform-aws-modules/terraform-aws-vpc",
+      "resolved_commit": "25322b6b6be69db6cca7f167d7b0e5327156a595",
+      "digest": "git:sha1:25322b6b6be69db6cca7f167d7b0e5327156a595",
+      "status": "locked"
     }
   ]
 }

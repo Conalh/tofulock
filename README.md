@@ -43,13 +43,22 @@ Early v0. Working today:
 | Source kind            | `list` | `lock`            | `verify`          |
 | ---------------------- | :----: | ----------------- | ----------------- |
 | git (`git::`, shorthand, `?ref=`) | ✅ | ✅ pinned to commit SHA | ✅ drift detection |
+| registry (`ns/name/provider`)     | ✅ | ✅ constraint → version → commit | ✅ version + commit drift |
 | local (`./…`)          | ✅     | skipped (versioned with root) | n/a       |
-| registry (`ns/name/provider`) | ✅ | skipped (roadmap) | roadmap           |
 | archive (`s3::`, `https://….zip`) | ✅ | skipped (roadmap) | roadmap   |
 
 A git commit SHA *is* a content hash (a Merkle root over the tree), so pinning a
 git module to its resolved commit is genuine content verification — the same
 property that makes provider checksums meaningful.
+
+Registry modules are resolved through the Module Registry Protocol (service
+discovery → version list → constraint selection via HashiCorp's `go-version` →
+download endpoint), then pinned to the commit behind the selected version. This
+covers the git-backed modules that make up the vast majority of the public
+registry; non-git registry downloads (tarballs) fall back to `skipped` pending
+content hashing. `verify` flags **two** kinds of registry drift: the constraint
+now selecting a newer version, and a published version being re-pointed to a
+different commit.
 
 ## Install
 
@@ -74,12 +83,12 @@ tofulock verify [dir]   # re-resolve and fail (exit 1) on any drift
 
 ```console
 $ tofulock lock ./examples/basic
-  skip    vpc_registry           (registry, not lockable yet)
-  locked  vpc_git                v5.8.1 @ 8a1...
-  locked  network                v4.1.2 @ c3f...
   skip    local_app              (local)
+  locked  network                v4.1.2 @ 8a0b697adfbc
+  locked  vpc_git                v5.8.1 @ 25322b6b6be6
+  locked  vpc_registry           5.8.1 @ 25322b6b6be6
 
-wrote .tofulock.lock.json  (2 locked, 2 skipped, 0 error)
+wrote .tofulock.lock.json  (3 locked, 1 skipped, 0 error)
 ```
 
 In CI, add a gate:
@@ -126,13 +135,15 @@ main.go
    ├─ cli/        command dispatch (list / lock / verify)
    ├─ tfmod/      module-call discovery via terraform-config-inspect
    ├─ resolve/    source classification + git ref → commit resolution
+   ├─ registry/   Module Registry Protocol: discovery, version select, download
+   ├─ lock/       resolution engine shared by lock and verify
    └─ lockfile/   deterministic lockfile read/write
 ```
 
 ## Roadmap
 
-- Registry source locking (resolve constraint → version → download → digest).
-- Archive sources (`s3::`, `gcs::`, `https://….zip`) via content hash.
+- Non-git-backed registry & archive sources (`s3::`, `gcs::`, `https://….zip`)
+  via downloaded content hash.
 - HCL (`.hcl`) lockfile output alongside JSON.
 - `--ci` / machine-readable output and a GitHub Action.
 - Policy gate: allowlists, source-host pinning, attestation export for audit.

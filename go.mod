@@ -2,7 +2,10 @@ module github.com/Conalh/tofulock
 
 go 1.26.3
 
-require github.com/hashicorp/terraform-config-inspect v0.0.0-20260224005459-813a97530220
+require (
+	github.com/hashicorp/go-version v1.9.0
+	github.com/hashicorp/terraform-config-inspect v0.0.0-20260224005459-813a97530220
+)
 
 require (
 	github.com/agext/levenshtein v1.2.2 // indirect
