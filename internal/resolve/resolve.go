@@ -4,12 +4,18 @@
 package resolve
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// gitTimeout bounds one ls-remote call so a stalled remote fails the run
+// instead of hanging CI until the job-level timeout.
+const gitTimeout = 60 * time.Second
 
 // Kind is the category of a module source address.
 type Kind string
@@ -161,9 +167,14 @@ func GitCommit(cloneURL, ref string) (string, error) {
 		query + "^{}",
 		"refs/tags/" + ref + "^{}",
 	}
-	cmd := exec.Command("git", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		return "", fmt.Errorf("git ls-remote %s: timed out after %s", cloneURL, gitTimeout)
+	}
 	if err != nil {
 		return "", fmt.Errorf("git ls-remote %s: %w", cloneURL, gitErr(err))
 	}

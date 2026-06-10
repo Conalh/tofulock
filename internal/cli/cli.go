@@ -39,13 +39,22 @@ func Run(args []string) int {
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "list":
-		dir, _ := parseArgs(rest)
+		dir, _, err := parseArgs(rest)
+		if err != nil {
+			return argErr(cmd, err)
+		}
 		return cmdList(dir)
 	case "lock":
-		dir, jsonOut := parseArgs(rest)
+		dir, jsonOut, err := parseArgs(rest)
+		if err != nil {
+			return argErr(cmd, err)
+		}
 		return cmdLock(dir, jsonOut)
 	case "verify":
-		dir, jsonOut := parseArgs(rest)
+		dir, jsonOut, err := parseArgs(rest)
+		if err != nil {
+			return argErr(cmd, err)
+		}
 		return cmdVerify(dir, jsonOut)
 	case "attest":
 		return cmdAttest(rest)
@@ -66,28 +75,38 @@ func Run(args []string) int {
 	}
 }
 
-// parseArgs extracts the target directory (first non-flag arg, default ".")
-// and whether --json was requested. Used by list/lock/verify.
-func parseArgs(rest []string) (dir string, jsonOut bool) {
+// argErr reports a bad command line. A typo'd flag must fail loudly (exit 2):
+// silently ignoring it in a CI gate would give false confidence.
+func argErr(cmd string, err error) int {
+	fmt.Fprintf(os.Stderr, "tofulock %s: %v\n", cmd, err)
+	return 2
+}
+
+// parseArgs extracts the target directory (one optional positional arg,
+// default ".") and whether --json was requested. Unknown flags and extra
+// positional args are errors. Used by list/lock/verify.
+func parseArgs(rest []string) (dir string, jsonOut bool, err error) {
 	dir = "."
 	dirSet := false
 	for _, a := range rest {
-		switch a {
-		case "-json", "--json":
+		switch {
+		case a == "-json" || a == "--json":
 			jsonOut = true
+		case strings.HasPrefix(a, "-"):
+			return "", false, fmt.Errorf("unknown flag %q", a)
+		case dirSet:
+			return "", false, fmt.Errorf("unexpected extra argument %q", a)
 		default:
-			if !strings.HasPrefix(a, "-") && !dirSet {
-				dir, dirSet = a, true
-			}
+			dir, dirSet = a, true
 		}
 	}
-	return dir, jsonOut
+	return dir, jsonOut, nil
 }
 
 // splitDir separates the optional positional directory from flag args so flags
 // may appear before or after the directory (Go's flag package otherwise stops
 // parsing at the first positional). valueFlags lists flags that consume a value.
-func splitDir(rest []string, valueFlags map[string]bool) (dir string, flags []string) {
+func splitDir(rest []string, valueFlags map[string]bool) (dir string, flags []string, err error) {
 	dir = "."
 	dirSet := false
 	for i := 0; i < len(rest); i++ {
@@ -103,11 +122,12 @@ func splitDir(rest []string, valueFlags map[string]bool) (dir string, flags []st
 			}
 			continue
 		}
-		if !dirSet {
-			dir, dirSet = a, true
+		if dirSet {
+			return "", nil, fmt.Errorf("unexpected extra argument %q", a)
 		}
+		dir, dirSet = a, true
 	}
-	return dir, flags
+	return dir, flags, nil
 }
 
 // discoverAll combines Terraform/OpenTofu module calls with any Terragrunt
@@ -198,7 +218,7 @@ func cmdLock(dir string, jsonOut bool) int {
 type verifyEntry struct {
 	Name          string `json:"name"`
 	Kind          string `json:"kind,omitempty"`
-	Status        string `json:"status"` // ok | drift | error | removed | new
+	Status        string `json:"status"` // ok | drift | error | removed | new | unlocked
 	Pin           string `json:"pin,omitempty"`
 	LockedCommit  string `json:"locked_commit,omitempty"`
 	CurrentCommit string `json:"current_commit,omitempty"`
@@ -239,6 +259,17 @@ func cmdVerify(dir string, jsonOut bool) int {
 	var problems, checked int
 
 	for _, want := range lf.Modules {
+		// An "error" lockfile entry means lock never pinned this module; it
+		// must fail verification until a clean lock run, or it stays
+		// unpinned (and invisible) forever.
+		if want.Status == "error" {
+			entries = append(entries, verifyEntry{
+				Name: want.Name, Kind: want.Type, Status: "unlocked",
+				Detail: "lockfile records a lock-time resolution error: " + want.Note,
+			})
+			problems++
+			continue
+		}
 		if want.Status != "locked" {
 			continue
 		}
@@ -274,10 +305,18 @@ func cmdVerify(dir string, jsonOut bool) int {
 		if stored[c.Name] {
 			continue
 		}
-		if lock.Module(c).Status == "locked" {
+		got := lock.Module(c)
+		switch got.Status {
+		case "locked":
 			entries = append(entries, verifyEntry{
-				Name: c.Name, Kind: string(resolve.Classify(c.Source)),
+				Name: c.Name, Kind: got.Type,
 				Status: "new", Detail: "in config, missing from lockfile",
+			})
+			problems++
+		case "error":
+			entries = append(entries, verifyEntry{
+				Name: c.Name, Kind: got.Type,
+				Status: "error", Detail: "in config, missing from lockfile, and failed to resolve: " + got.Note,
 			})
 			problems++
 		}
@@ -296,7 +335,10 @@ func cmdVerify(dir string, jsonOut bool) int {
 }
 
 func cmdAttest(rest []string) int {
-	dir, flagArgs := splitDir(rest, map[string]bool{"key": true, "out": true, "approved-by": true})
+	dir, flagArgs, err := splitDir(rest, map[string]bool{"key": true, "out": true, "approved-by": true})
+	if err != nil {
+		return argErr("attest", err)
+	}
 	fs := flag.NewFlagSet("attest", flag.ContinueOnError)
 	keyPath := fs.String("key", "", "ed25519 private key (PEM) to sign a DSSE envelope; unsigned statement if omitted")
 	outPath := fs.String("out", "", "write output to this file instead of stdout")
@@ -325,7 +367,12 @@ func cmdAttest(rest []string) int {
 	out := stmtBytes
 	signed := false
 	if *keyPath != "" {
-		priv, err := attest.ParsePrivatePEM(mustRead(*keyPath))
+		keyBytes, err := os.ReadFile(*keyPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "tofulock: reading signing key: %v\n", err)
+			return 1
+		}
+		priv, err := attest.ParsePrivatePEM(keyBytes)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "tofulock: loading signing key: %v\n", err)
 			return 1
@@ -355,7 +402,10 @@ func cmdAttest(rest []string) int {
 }
 
 func cmdVerifyAttest(rest []string) int {
-	dir, flagArgs := splitDir(rest, map[string]bool{"key": true, "att": true})
+	dir, flagArgs, err := splitDir(rest, map[string]bool{"key": true, "att": true})
+	if err != nil {
+		return argErr("verify-attest", err)
+	}
 	fs := flag.NewFlagSet("verify-attest", flag.ContinueOnError)
 	keyPath := fs.String("key", "", "ed25519 public key (PEM) to verify the DSSE signature (required)")
 	attPath := fs.String("att", "", "attestation envelope file (default: <dir>/"+dsseFile+")")
@@ -371,7 +421,12 @@ func cmdVerifyAttest(rest []string) int {
 		envPath = filepath.Join(dir, dsseFile)
 	}
 
-	pub, err := attest.ParsePublicPEM(mustRead(*keyPath))
+	keyBytes, err := os.ReadFile(*keyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tofulock: reading public key: %v\n", err)
+		return 1
+	}
+	pub, err := attest.ParsePublicPEM(keyBytes)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "tofulock: loading public key: %v\n", err)
 		return 1
@@ -444,8 +499,20 @@ func cmdVerifyAttest(rest []string) int {
 func cmdKeygen(rest []string) int {
 	fs := flag.NewFlagSet("keygen", flag.ContinueOnError)
 	out := fs.String("out", "tofulock", "output key path prefix (writes <prefix>.key and <prefix>.pub)")
+	force := fs.Bool("force", false, "overwrite existing key files")
 	if err := fs.Parse(rest); err != nil {
 		return 2
+	}
+	privFile, pubFile := *out+".key", *out+".pub"
+	// Check both paths before writing either, so a refusal can never leave a
+	// fresh .key next to a stale .pub (a mismatched pair).
+	if !*force {
+		for _, p := range []string{privFile, pubFile} {
+			if _, err := os.Stat(p); err == nil {
+				fmt.Fprintf(os.Stderr, "tofulock: %s already exists; use --force to overwrite\n", p)
+				return 1
+			}
+		}
 	}
 	priv, pub, err := attest.GenerateKey()
 	if err != nil {
@@ -462,7 +529,6 @@ func cmdKeygen(rest []string) int {
 		fmt.Fprintln(os.Stderr, "tofulock:", err)
 		return 1
 	}
-	privFile, pubFile := *out+".key", *out+".pub"
 	if err := os.WriteFile(privFile, privPEM, 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, "tofulock:", err)
 		return 1
@@ -473,14 +539,6 @@ func cmdKeygen(rest []string) int {
 	}
 	fmt.Printf("wrote %s (private, keep secret) and %s (public)\n", privFile, pubFile)
 	return 0
-}
-
-func mustRead(path string) []byte {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil // ParsePEM will surface a clear "no PEM block" error
-	}
-	return b
 }
 
 func renderVerify(entries []verifyEntry, problems int) {
@@ -501,6 +559,8 @@ func renderVerify(entries []verifyEntry, problems int) {
 			fmt.Printf("  REMOVED %-22s %s\n", e.Name, e.Detail)
 		case "new":
 			fmt.Printf("  NEW     %-22s %s\n", e.Name, e.Detail)
+		case "unlocked":
+			fmt.Printf("  UNLOCKED %-21s %s\n", e.Name, e.Detail)
 		}
 	}
 	if problems > 0 {
@@ -592,6 +652,7 @@ FLAGS:
   --out PATH             Output file (attest, keygen prefix)
   --approved-by NAME     Approver identity recorded in the attestation (attest)
   --att PATH             Attestation envelope to verify (verify-attest)
+  --force                Overwrite existing key files (keygen)
 
 The native .terraform.lock.hcl records provider dependencies only; module
 versions are never pinned. tofulock pins git and registry modules to a commit

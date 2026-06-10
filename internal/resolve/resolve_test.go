@@ -1,6 +1,9 @@
 package resolve
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestClassify(t *testing.T) {
 	cases := []struct {
@@ -60,6 +63,19 @@ func TestParseGit(t *testing.T) {
 			t.Errorf("ParseGit(%q) = %+v, want {CloneURL:%q Subdir:%q Ref:%q}",
 				c.source, gs, c.cloneURL, c.subdir, c.ref)
 		}
+	}
+}
+
+func TestGitCommitPinnedSHA(t *testing.T) {
+	// A 40-hex ref is already a pin: GitCommit must return it (lowercased)
+	// without contacting the remote.
+	sha := "0123456789ABCDEF0123456789abcdef01234567"
+	got, err := GitCommit("https://example.invalid/repo.git", sha)
+	if err != nil {
+		t.Fatalf("GitCommit: %v", err)
+	}
+	if got != strings.ToLower(sha) {
+		t.Errorf("GitCommit = %q, want lowercased input", got)
 	}
 }
 
