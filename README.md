@@ -82,7 +82,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Conalh/tofulock@main
+      - uses: Conalh/tofulock@v0.5.0
         with:
           directory: .
 ```

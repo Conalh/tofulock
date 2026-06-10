@@ -11,7 +11,7 @@ inputs:
   version:
     description: 'tofulock version to install (a release tag, or a branch like "main")'
     required: false
-    default: 'main'
+    default: 'v0.5.0'
   json:
     description: 'Emit machine-readable JSON output'
     required: false
@@ -22,14 +22,21 @@ runs:
     - uses: actions/setup-go@v6
       with:
         go-version: 'stable'
+    # Inputs are passed via env, not interpolated into the script, so a
+    # crafted input value can't inject shell commands.
     - name: Install tofulock
       shell: bash
-      run: go install github.com/Conalh/tofulock@${{ inputs.version }}
+      env:
+        TOFULOCK_VERSION: ${{ inputs.version }}
+      run: go install "github.com/Conalh/tofulock@$TOFULOCK_VERSION"
     - name: Verify module integrity
       shell: bash
+      env:
+        TOFULOCK_DIR: ${{ inputs.directory }}
+        TOFULOCK_JSON: ${{ inputs.json }}
       run: |
-        if [ "${{ inputs.json }}" = "true" ]; then
-          tofulock verify "${{ inputs.directory }}" --json
+        if [ "$TOFULOCK_JSON" = "true" ]; then
+          tofulock verify "$TOFULOCK_DIR" --json
         else
-          tofulock verify "${{ inputs.directory }}"
+          tofulock verify "$TOFULOCK_DIR"
         fi
