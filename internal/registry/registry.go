@@ -12,8 +12,10 @@ import (
 	"github.com/hashicorp/go-version"
 )
 
-// DefaultHost is the registry used when an address omits an explicit host.
-const DefaultHost = "registry.terraform.io"
+// DefaultHost is the registry used when a module address omits an explicit
+// host. Terraform and OpenTofu ship different defaults (registry.terraform.io
+// vs registry.opentofu.org); the CLI overrides this to match the tool in use.
+var DefaultHost = "registry.terraform.io"
 
 const userAgent = "tofulock"
 
@@ -170,7 +172,17 @@ func downloadSource(base string, a Address, ver string) (string, error) {
 	if loc := resp.Header.Get("X-Terraform-Get"); loc != "" {
 		return resolveGet(a.Host, loc), nil
 	}
-	return "", fmt.Errorf("registry %s: no X-Terraform-Get for %s %s (HTTP %d)",
+	// Modern registries (e.g. registry.opentofu.org) return HTTP 200 with the
+	// source in a JSON body instead of the X-Terraform-Get header.
+	if resp.StatusCode == http.StatusOK {
+		var body struct {
+			Location string `json:"location"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err == nil && body.Location != "" {
+			return resolveGet(a.Host, body.Location), nil
+		}
+	}
+	return "", fmt.Errorf("registry %s: no download source for %s %s (HTTP %d)",
 		a.Host, a.modulePath(), ver, resp.StatusCode)
 }
 

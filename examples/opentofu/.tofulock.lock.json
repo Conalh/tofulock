@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "tool": "tofulock",
+  "modules": [
+    {
+      "name": "vpc_git",
+      "source": "git::https://github.com/terraform-aws-modules/terraform-aws-vpc.git?ref=v5.8.1",
+      "type": "git",
+      "constraint": "v5.8.1",
+      "clone_url": "https://github.com/terraform-aws-modules/terraform-aws-vpc.git",
+      "resolved_commit": "25322b6b6be69db6cca7f167d7b0e5327156a595",
+      "digest": "git:sha1:25322b6b6be69db6cca7f167d7b0e5327156a595",
+      "status": "locked"
+    },
+    {
+      "name": "vpc_registry",
+      "source": "terraform-aws-modules/vpc/aws",
+      "type": "registry",
+      "constraint": "6.6.1",
+      "version": "6.6.1",
+      "clone_url": "https://github.com/terraform-aws-modules/terraform-aws-vpc",
+      "resolved_commit": "3ffbd46fb1c7733e1b34d8666893280454e27436",
+      "digest": "git:sha1:3ffbd46fb1c7733e1b34d8666893280454e27436",
+      "status": "locked"
+    }
+  ]
+}

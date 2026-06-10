@@ -82,13 +82,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Conalh/tofulock@v0.5.0
+      - uses: Conalh/tofulock@v0.6.0
         with:
           directory: .
 ```
 
 `verify` exits non-zero on drift; add `--json` (CLI) for a machine-readable
 report.
+
+## OpenTofu
+
+`.tofu` / `.tofu.json` files are discovered alongside `.tf`, honoring
+OpenTofu's precedence rule (a `main.tofu` shadows `main.tf` entirely). One
+difference needs a flag: OpenTofu resolves bare registry addresses like
+`terraform-aws-modules/vpc/aws` against **registry.opentofu.org**, while
+tofulock defaults to registry.terraform.io. Tell tofulock to match the tool
+you deploy with:
+
+```sh
+tofulock lock   . --registry-host registry.opentofu.org
+tofulock verify . --registry-host registry.opentofu.org
+# or: export TOFULOCK_REGISTRY_HOST=registry.opentofu.org
+```
+
+Use the same host for `lock` and `verify` (in CI, set the env var or the
+action's `registry-host` input), or verify may report version drift that
+`tofu init` would never see. Git sources and explicit-host registry addresses
+are unaffected. See `examples/opentofu` for a locked `.tofu` config.
 
 ## Sign & verify attestations
 

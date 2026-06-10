@@ -43,3 +43,7 @@ jobs:
           ./tofulock verify-attest ./examples/basic --key ci.pub --att ci.dsse.json
       - name: verify terragrunt example (self-dogfood)
         run: ./tofulock verify ./examples/terragrunt
+      - name: verify opentofu example (self-dogfood)
+        run: ./tofulock verify ./examples/opentofu
+        env:
+          TOFULOCK_REGISTRY_HOST: registry.opentofu.org

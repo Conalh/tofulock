@@ -11,11 +11,15 @@ inputs:
   version:
     description: 'tofulock version to install (a release tag, or a branch like "main")'
     required: false
-    default: 'v0.5.0'
+    default: 'v0.6.0'
   json:
     description: 'Emit machine-readable JSON output'
     required: false
     default: 'false'
+  registry-host:
+    description: 'Registry for bare module addresses (OpenTofu users: registry.opentofu.org)'
+    required: false
+    default: ''
 runs:
   using: 'composite'
   steps:
@@ -34,6 +38,7 @@ runs:
       env:
         TOFULOCK_DIR: ${{ inputs.directory }}
         TOFULOCK_JSON: ${{ inputs.json }}
+        TOFULOCK_REGISTRY_HOST: ${{ inputs.registry-host }}
       run: |
         if [ "$TOFULOCK_JSON" = "true" ]; then
           tofulock verify "$TOFULOCK_DIR" --json

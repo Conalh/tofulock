@@ -11,26 +11,28 @@ import (
 func TestParseArgs(t *testing.T) {
 	cases := []struct {
 		args    []string
-		dir     string
-		json    bool
+		want    runOpts
 		wantErr bool
 	}{
-		{nil, ".", false, false},
-		{[]string{"./envs/dev"}, "./envs/dev", false, false},
-		{[]string{"--json"}, ".", true, false},
-		{[]string{"./x", "-json"}, "./x", true, false},
-		{[]string{"--jsno"}, "", false, true},           // typo'd flag must not pass silently
-		{[]string{"--directory", "x"}, "", false, true}, // unknown flag
-		{[]string{"a", "b"}, "", false, true},           // extra positional
+		{nil, runOpts{dir: "."}, false},
+		{[]string{"./envs/dev"}, runOpts{dir: "./envs/dev"}, false},
+		{[]string{"--json"}, runOpts{dir: ".", json: true}, false},
+		{[]string{"./x", "-json"}, runOpts{dir: "./x", json: true}, false},
+		{[]string{"--registry-host", "registry.opentofu.org"}, runOpts{dir: ".", registryHost: "registry.opentofu.org"}, false},
+		{[]string{"--registry-host=registry.opentofu.org", "./x"}, runOpts{dir: "./x", registryHost: "registry.opentofu.org"}, false},
+		{[]string{"--registry-host"}, runOpts{}, true},    // missing value
+		{[]string{"--jsno"}, runOpts{}, true},             // typo'd flag must not pass silently
+		{[]string{"--directory", "x"}, runOpts{}, true},   // unknown flag
+		{[]string{"a", "b"}, runOpts{}, true},             // extra positional
 	}
 	for _, c := range cases {
-		dir, json, err := parseArgs(c.args)
+		o, err := parseArgs(c.args)
 		if (err != nil) != c.wantErr {
 			t.Errorf("parseArgs(%v) err = %v, wantErr %v", c.args, err, c.wantErr)
 			continue
 		}
-		if err == nil && (dir != c.dir || json != c.json) {
-			t.Errorf("parseArgs(%v) = (%q, %v), want (%q, %v)", c.args, dir, json, c.dir, c.json)
+		if err == nil && o != c.want {
+			t.Errorf("parseArgs(%v) = %+v, want %+v", c.args, o, c.want)
 		}
 	}
 }

@@ -16,13 +16,14 @@ import (
 	"github.com/Conalh/tofulock/internal/attest"
 	"github.com/Conalh/tofulock/internal/lock"
 	"github.com/Conalh/tofulock/internal/lockfile"
+	"github.com/Conalh/tofulock/internal/registry"
 	"github.com/Conalh/tofulock/internal/resolve"
 	"github.com/Conalh/tofulock/internal/terragrunt"
 	"github.com/Conalh/tofulock/internal/tfmod"
 )
 
 // Version is the tofulock release version.
-const Version = "0.5.0"
+const Version = "0.6.0"
 
 // Default attestation filenames.
 const (
@@ -39,23 +40,26 @@ func Run(args []string) int {
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "list":
-		dir, _, err := parseArgs(rest)
+		o, err := parseArgs(rest)
 		if err != nil {
 			return argErr(cmd, err)
 		}
-		return cmdList(dir)
+		applyRegistryHost(o.registryHost)
+		return cmdList(o.dir)
 	case "lock":
-		dir, jsonOut, err := parseArgs(rest)
+		o, err := parseArgs(rest)
 		if err != nil {
 			return argErr(cmd, err)
 		}
-		return cmdLock(dir, jsonOut)
+		applyRegistryHost(o.registryHost)
+		return cmdLock(o.dir, o.json)
 	case "verify":
-		dir, jsonOut, err := parseArgs(rest)
+		o, err := parseArgs(rest)
 		if err != nil {
 			return argErr(cmd, err)
 		}
-		return cmdVerify(dir, jsonOut)
+		applyRegistryHost(o.registryHost)
+		return cmdVerify(o.dir, o.json)
 	case "attest":
 		return cmdAttest(rest)
 	case "verify-attest":
@@ -82,25 +86,58 @@ func argErr(cmd string, err error) int {
 	return 2
 }
 
+// runOpts are the shared options of list/lock/verify.
+type runOpts struct {
+	dir          string
+	json         bool
+	registryHost string
+}
+
 // parseArgs extracts the target directory (one optional positional arg,
-// default ".") and whether --json was requested. Unknown flags and extra
-// positional args are errors. Used by list/lock/verify.
-func parseArgs(rest []string) (dir string, jsonOut bool, err error) {
-	dir = "."
+// default ".") and the shared flags. Unknown flags and extra positional args
+// are errors. Used by list/lock/verify.
+func parseArgs(rest []string) (o runOpts, err error) {
+	o.dir = "."
 	dirSet := false
-	for _, a := range rest {
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
 		switch {
 		case a == "-json" || a == "--json":
-			jsonOut = true
+			o.json = true
+		case a == "-registry-host" || a == "--registry-host":
+			if i+1 >= len(rest) {
+				return o, fmt.Errorf("%s requires a value", a)
+			}
+			i++
+			o.registryHost = rest[i]
+		case strings.HasPrefix(a, "--registry-host="):
+			o.registryHost = strings.TrimPrefix(a, "--registry-host=")
+		case strings.HasPrefix(a, "-registry-host="):
+			o.registryHost = strings.TrimPrefix(a, "-registry-host=")
 		case strings.HasPrefix(a, "-"):
-			return "", false, fmt.Errorf("unknown flag %q", a)
+			return o, fmt.Errorf("unknown flag %q", a)
 		case dirSet:
-			return "", false, fmt.Errorf("unexpected extra argument %q", a)
+			return o, fmt.Errorf("unexpected extra argument %q", a)
 		default:
-			dir, dirSet = a, true
+			o.dir, dirSet = a, true
 		}
 	}
-	return dir, jsonOut, nil
+	return o, nil
+}
+
+// applyRegistryHost sets the registry used for bare module addresses:
+// --registry-host flag, then TOFULOCK_REGISTRY_HOST, then Terraform's default.
+// OpenTofu resolves bare addresses against registry.opentofu.org, so OpenTofu
+// users should set one of these — consistently for both lock and verify, or
+// verify may see version drift that tofu init would not.
+func applyRegistryHost(flagVal string) {
+	host := flagVal
+	if host == "" {
+		host = os.Getenv("TOFULOCK_REGISTRY_HOST")
+	}
+	if host != "" {
+		registry.DefaultHost = host
+	}
 }
 
 // splitDir separates the optional positional directory from flag args so flags
@@ -648,6 +685,9 @@ COMMANDS:
 
 FLAGS:
   --json                 Machine-readable output (lock, verify)
+  --registry-host HOST   Registry for bare module addresses (list, lock, verify).
+                         Default registry.terraform.io; OpenTofu users want
+                         registry.opentofu.org. Env: TOFULOCK_REGISTRY_HOST.
   --key PATH             Signing/verifying key (attest, verify-attest)
   --out PATH             Output file (attest, keygen prefix)
   --approved-by NAME     Approver identity recorded in the attestation (attest)

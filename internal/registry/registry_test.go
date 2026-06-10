@@ -74,6 +74,24 @@ func TestPickVersionAndDownload(t *testing.T) {
 	}
 }
 
+func TestDownloadSourceJSONBody(t *testing.T) {
+	// registry.opentofu.org returns the source in a JSON body, not the
+	// X-Terraform-Get header.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"location":"git::https://github.com/ns/name?ref=3ffbd46fb1c7733e1b34d8666893280454e27436"}`))
+	}))
+	defer srv.Close()
+	addr := Address{Host: "example", Namespace: "ns", Name: "name", Provider: "aws"}
+	src, err := downloadSource(srv.URL+"/", addr, "6.6.1")
+	if err != nil {
+		t.Fatalf("downloadSource: %v", err)
+	}
+	if src != "git::https://github.com/ns/name?ref=3ffbd46fb1c7733e1b34d8666893280454e27436" {
+		t.Fatalf("downloadSource = %q", src)
+	}
+}
+
 func TestPickVersionNoMatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"modules":[{"versions":[{"version":"1.0.0"}]}]}`))
