@@ -179,6 +179,11 @@ up the bulk of the public registry. `verify` flags two kinds of registry drift:
 the constraint now selecting a newer version, and a published version being
 re-pointed to a different commit.
 
+**Version selection** matches Terraform/OpenTofu semantics: a bare constraint
+like `~> 5.0` selects the highest *stable* version (prereleases are skipped),
+while an exact pin like `6.6.1-rc1` or a range that mentions a prerelease can
+select a prerelease. With no constraint, the highest stable version wins.
+
 **Terragrunt:** a `terragrunt.hcl` `terraform { source = … }` block is
 discovered and locked/verified/attested like any module — git and `tfr://`
 registry sources resolve normally; an interpolated source (`${local.…}`) is
@@ -220,14 +225,15 @@ commit SHA for a ref without cloning.
 ```
 main.go
 └─ internal/
-   ├─ cli/        command dispatch (list / lock / verify / attest / …)
+   ├─ cli/        command dispatch + per-command cmd_*.go (list / lock / verify / attest / …)
    ├─ tfmod/      module-call discovery via terraform-config-inspect
    ├─ terragrunt/ terragrunt.hcl terraform{} source discovery
    ├─ resolve/    source classification + git ref → commit resolution
    ├─ registry/   Module Registry Protocol: discovery, version select, download
    ├─ lock/       resolution engine shared by lock and verify
    ├─ lockfile/   deterministic lockfile read/write
-   └─ attest/     in-toto statement + DSSE envelope + ed25519 signing
+   ├─ attest/     in-toto statement + DSSE envelope + ed25519 signing
+   └─ util/       tiny shared helpers (query-string parsing)
 ```
 
 See [THREAT_MODEL.md](THREAT_MODEL.md) for the trust assumptions and
