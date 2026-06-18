@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Conalh/tofulock/internal/util"
 )
 
 // gitTimeout bounds one ls-remote call so a stalled remote fails the run
@@ -109,7 +111,7 @@ func ParseGit(source string) (GitSource, error) {
 
 	var ref string
 	if i := strings.LastIndex(s, "?"); i >= 0 {
-		ref = queryGet(s[i+1:], "ref")
+		ref = util.QueryGet(s[i+1:], "ref")
 		s = s[:i]
 	}
 
@@ -138,15 +140,6 @@ func splitSubdir(s string) (base, sub string) {
 		return scheme + s[:j], strings.Trim(s[j+2:], "/")
 	}
 	return scheme + s, ""
-}
-
-func queryGet(query, key string) string {
-	for _, kv := range strings.Split(query, "&") {
-		if i := strings.Index(kv, "="); i >= 0 && kv[:i] == key {
-			return kv[i+1:]
-		}
-	}
-	return ""
 }
 
 // GitCommit resolves ref against the remote and returns the full commit SHA,
@@ -189,19 +182,29 @@ func GitCommit(cloneURL, ref string) (string, error) {
 	if len(refs) == 0 {
 		return "", fmt.Errorf("ref %q not found in %s", ref, cloneURL)
 	}
-	// Prefer a peeled annotated-tag commit (refs/tags/x^{}).
-	for name, sha := range refs {
-		if strings.HasSuffix(name, "^{}") {
-			return sha, nil
-		}
-	}
-	for _, key := range []string{"refs/tags/" + ref, "refs/heads/" + ref, query, "HEAD"} {
+	// Resolve in a fixed precedence order so the same ref always pins to the
+	// same commit across runs (map iteration is random, and a peeled annotated
+	// tag like refs/tags/v1^{} must win over its annotated-tag object, but only
+	// for *this* ref — never a different tag that also happened to be returned).
+	peeledTag := "refs/tags/" + ref + "^{}"
+	for _, key := range []string{
+		peeledTag,
+		"refs/tags/" + ref,
+		"refs/heads/" + ref,
+		query,
+		query + "^{}",
+		"HEAD",
+	} {
 		if sha, ok := refs[key]; ok {
 			return sha, nil
 		}
 	}
-	for _, sha := range refs {
-		return sha, nil
+	// Last resort: a single unpeeled ref we didn't name explicitly. Deterministic
+	// because there's exactly one entry.
+	if len(refs) == 1 {
+		for _, sha := range refs {
+			return sha, nil
+		}
 	}
 	return "", fmt.Errorf("ref %q not found in %s", ref, cloneURL)
 }

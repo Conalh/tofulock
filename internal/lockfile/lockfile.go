@@ -27,7 +27,7 @@ type File struct {
 type Module struct {
 	Name           string `json:"name"`
 	Source         string `json:"source"`
-	Type           string `json:"type"`             // git | registry | local | archive | other
+	Type           string `json:"type"` // git | registry | local | archive | other
 	Constraint     string `json:"constraint,omitempty"`
 	Version        string `json:"version,omitempty"` // resolved exact version (registry sources)
 	CloneURL       string `json:"clone_url,omitempty"`
@@ -64,4 +64,21 @@ func Read(dir string) (*File, error) {
 		return nil, err
 	}
 	return &f, nil
+}
+
+// ReadRaw loads dir/FileName and returns both the parsed file and the exact
+// on-disk bytes. Callers that need a digest over the lockfile (e.g. attestation
+// signing/verification) must use this instead of separate Read + ReadFile
+// calls, which would race against a concurrent writer (TOCTOU) and could bind
+// a signature to bytes that don't match the parsed modules.
+func ReadRaw(dir string) (*File, []byte, error) {
+	raw, err := os.ReadFile(Path(dir))
+	if err != nil {
+		return nil, nil, err
+	}
+	var f File
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return nil, nil, err
+	}
+	return &f, raw, nil
 }

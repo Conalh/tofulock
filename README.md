@@ -60,13 +60,17 @@ locked module and exits non-zero if a tag moved, a ref was re-pointed, or a
 constraint now selects a different version.
 
 ```sh
-tofulock list   [dir]            # show module calls and their classified source kind
-tofulock lock   [dir] [--json]   # resolve git & registry modules to commits, write the lockfile
-tofulock verify [dir] [--json]   # re-resolve and fail (exit 1) on any drift
-tofulock attest [dir] --key K    # emit an in-toto module-provenance record (signed with --key)
+tofulock list   [dir]                  # show module calls and their classified source kind
+tofulock lock   [dir] [--json] [--force]   # resolve git & registry modules to commits, write the lockfile
+tofulock verify [dir] [--json]         # re-resolve and fail (exit 1) on any drift
+tofulock attest [dir] --key K          # emit an in-toto module-provenance record (signed with --key)
 tofulock verify-attest [dir] --key K.pub   # verify a signed attestation against the lockfile
-tofulock keygen --out signer     # generate an ed25519 signing keypair
+tofulock keygen --out signer           # generate an ed25519 signing keypair
 ```
+
+`lock` refuses to overwrite a known-good lockfile when some modules fail to
+resolve, so a transient `git ls-remote` or registry blip can't destroy your
+recorded pins — pass `--force` to write anyway.
 
 ## Use in CI (GitHub Actions)
 

@@ -4,8 +4,10 @@
 #   tofulock lock   .
 #   tofulock verify .
 
-# Registry source — version-constrained but NOT pinned by the native
-# .terraform.lock.hcl. tofulock records it as skipped today (roadmap).
+# Registry source — version-constrained but NOT content-pinned by the native
+# .terraform.lock.hcl (which records providers only). tofulock resolves it
+# through the Module Registry Protocol and pins it to the commit behind the
+# selected version.
 module "vpc_registry" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.8.1"

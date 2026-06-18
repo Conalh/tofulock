@@ -146,11 +146,18 @@ func pickVersion(base string, a Address, constraint string) (string, error) {
 		if err != nil {
 			continue
 		}
-		// Skip prereleases unless an exact match is implied by the constraint.
-		if ver.Prerelease() != "" {
-			continue
-		}
-		if cons != nil && !cons.Check(ver) {
+		if cons != nil {
+			// go-version's constraint check already filters prereleases unless
+			// the constraint itself references one (see its prereleaseCheck), so
+			// an exact pin like "6.6.1-rc1" or a constraint like ">= 6.6.1-rc1"
+			// can match a prerelease, while "~> 5.0" still selects only stable
+			// versions. We must not second-guess that here.
+			if !cons.Check(ver) {
+				continue
+			}
+		} else if ver.Prerelease() != "" {
+			// No constraint: default to the highest stable version, matching
+			// Terraform/OpenTofu's default resolution behavior.
 			continue
 		}
 		if best == nil || ver.GreaterThan(best) {

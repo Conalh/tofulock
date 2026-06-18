@@ -8,9 +8,9 @@ import (
 
 func TestParseAddress(t *testing.T) {
 	cases := []struct {
-		in                            string
-		host, ns, name, prov, subdir  string
-		wantErr                       bool
+		in                           string
+		host, ns, name, prov, subdir string
+		wantErr                      bool
 	}{
 		{"terraform-aws-modules/vpc/aws", DefaultHost, "terraform-aws-modules", "vpc", "aws", "", false},
 		{"app.terraform.io/corp/vpc/aws", "app.terraform.io", "corp", "vpc", "aws", "", false},
@@ -100,5 +100,32 @@ func TestPickVersionNoMatch(t *testing.T) {
 	addr := Address{Host: "example", Namespace: "ns", Name: "name", Provider: "aws"}
 	if _, err := pickVersion(srv.URL+"/", addr, ">= 5.0"); err == nil {
 		t.Error("expected no-match error for >= 5.0 against 1.0.0")
+	}
+}
+
+// TestPickVersionPrerelease pins the rule that a prerelease is selectable only
+// when the constraint itself references one. An exact pin or a range that
+// mentions a prerelease may match; a plain stable-only constraint must not.
+func TestPickVersionPrerelease(t *testing.T) {
+	versions := `{"modules":[{"versions":[
+		{"version":"5.8.1"},{"version":"6.6.1-rc1"},{"version":"6.6.1"}
+	]}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(versions))
+	}))
+	defer srv.Close()
+	addr := Address{Host: "example", Namespace: "ns", Name: "name", Provider: "aws"}
+
+	// Exact prerelease pin selects the prerelease.
+	if v, err := pickVersion(srv.URL+"/", addr, "6.6.1-rc1"); err != nil || v != "6.6.1-rc1" {
+		t.Errorf("exact prerelease pin = %q, %v; want 6.6.1-rc1", v, err)
+	}
+	// A stable-only constraint (~> 5.0) ignores the prerelease and picks 5.8.1.
+	if v, err := pickVersion(srv.URL+"/", addr, "~> 5.0"); err != nil || v != "5.8.1" {
+		t.Errorf("~> 5.0 = %q, %v; want 5.8.1 (prerelease skipped)", v, err)
+	}
+	// No constraint defaults to the highest stable version (6.6.1, not -rc1).
+	if v, err := pickVersion(srv.URL+"/", addr, ""); err != nil || v != "6.6.1" {
+		t.Errorf("no constraint = %q, %v; want 6.6.1 (latest stable)", v, err)
 	}
 }
