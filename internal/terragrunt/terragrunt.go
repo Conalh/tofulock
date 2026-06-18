@@ -14,6 +14,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/Conalh/tofulock/internal/tfmod"
+	"github.com/Conalh/tofulock/internal/util"
 )
 
 // FileName is the Terragrunt unit configuration file.
@@ -75,18 +76,9 @@ func normalize(source string) (addr, version string) {
 	}
 	rest := strings.TrimPrefix(source, "tfr://")
 	if i := strings.Index(rest, "?"); i >= 0 {
-		version = queryGet(rest[i+1:], "version")
+		version = util.QueryGet(rest[i+1:], "version")
 		rest = rest[:i]
 	}
 	// tfr:///ns/name/provider uses the default registry host (leading slash).
 	return strings.TrimPrefix(rest, "/"), version
-}
-
-func queryGet(query, key string) string {
-	for _, kv := range strings.Split(query, "&") {
-		if i := strings.Index(kv, "="); i >= 0 && kv[:i] == key {
-			return kv[i+1:]
-		}
-	}
-	return ""
 }
