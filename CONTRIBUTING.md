@@ -34,11 +34,13 @@ hits the network. Live resolution is exercised by the `dogfood` job in CI.
 internal/
   cli/        command dispatch and output rendering
   tfmod/      module-call discovery (terraform-config-inspect)
+  terragrunt/ terragrunt.hcl terraform{} source discovery
   resolve/    source classification + git ref → commit
   registry/   Module Registry Protocol client
   lock/       resolution engine shared by lock and verify
   lockfile/   deterministic lockfile read/write
   attest/     in-toto statement + DSSE envelope + ed25519 signing
+  util/       tiny shared helpers (e.g. query-string parsing)
 ```
 
 See [THREAT_MODEL.md](THREAT_MODEL.md) for the design's trust boundaries.
@@ -54,7 +56,9 @@ See [THREAT_MODEL.md](THREAT_MODEL.md) for the design's trust boundaries.
 - **New source types** should plug into `resolve.Classify` + `lock.Module` and
   come with tests. Keep network calls out of unit tests (use `httptest` or pure
   parsing tests).
-- Run `gofmt`, `go vet ./...`, and `go test ./...` before opening a PR.
+- Run `gofmt`, `go vet ./...`, and `go test ./...` before opening a PR. CI
+  enforces `gofmt -l` (no diffs) and `golangci-lint` (see `.golangci.yml`),
+  and runs the test suite on Ubuntu, Windows, and macOS.
 
 ## Pull requests
 

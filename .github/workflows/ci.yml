@@ -9,8 +9,34 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: gofmt
+        # Fail if any file would be reformatted. Keeps diffs clean and matches
+        # the CONTRIBUTING.md convention that `gofmt` is run before a PR.
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "::error::gofmt would reformat the following files:$out"
+            exit 1
+          fi
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.62.2
+          args: --timeout 5m
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -25,7 +51,7 @@ jobs:
         run: go build ./...
 
   dogfood:
-    needs: test
+    needs: [lint, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -34,8 +60,18 @@ jobs:
           go-version: stable
       - name: build
         run: go build -o tofulock .
-      - name: verify example modules (self-dogfood)
-        run: ./tofulock verify ./examples/basic
+      - name: list (self-dogfood)
+        run: ./tofulock list ./examples/basic
+      - name: verify example modules — text + json
+        # Verify against the committed lockfile first (real drift check), then
+        # exercise the JSON renderer. lock --json runs after verify so it
+        # cannot tautologize the drift check by rewriting the lockfile first.
+        run: |
+          ./tofulock verify ./examples/basic
+          ./tofulock verify --json ./examples/basic > verify.json
+          head -5 verify.json
+      - name: lock --json (exercises lock + json output)
+        run: ./tofulock lock --json ./examples/basic > lock.json
       - name: attest + verify-attest (self-dogfood)
         run: |
           ./tofulock keygen --out ci
@@ -43,7 +79,7 @@ jobs:
           ./tofulock verify-attest ./examples/basic --key ci.pub --att ci.dsse.json
       - name: verify terragrunt example (self-dogfood)
         run: ./tofulock verify ./examples/terragrunt
-      - name: verify opentofu example (self-dogfood)
-        run: ./tofulock verify ./examples/opentofu
-        env:
-          TOFULOCK_REGISTRY_HOST: registry.opentofu.org
+      - name: verify opentofu example (self-dogfood, --registry-host flag)
+        # The --registry-host flag and TOFULOCK_REGISTRY_HOST env var both set
+        # the same default registry; this step exercises the flag path.
+        run: ./tofulock verify ./examples/opentofu --registry-host registry.opentofu.org

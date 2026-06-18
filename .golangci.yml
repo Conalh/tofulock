@@ -1,0 +1,25 @@
+# Conservative golangci-lint config: a small, stable set of linters that catch
+# real bugs without policing style. Bump the enabled set deliberately; enabling
+# a new linter should be a conscious decision, not a side effect of `default: all`.
+linters:
+  disable-all: true
+  enable:
+    - govet         # standard go vet checks
+    - ineffassign   # assignments to variables that are never used
+    - staticcheck   # SA*: a broad set of real-bug checks
+    - unused        # unused consts/funcs/types/vars
+    - gofmt         # report files not formatted by gofmt
+    - gosimple      # simplifications
+
+linters-settings:
+  govet:
+    enable-all: false
+  staticcheck:
+    # ST1000: missing package doc comment — too noisy for an internal/* layout.
+    checks: ["all", "-ST1000"]
+
+issues:
+  # Don't drown the report in low-value style nits; we run gofmt and vet for
+  # correctness. One issue per line is enough.
+  max-issues-per-linter: 0
+  max-same-issues: 0
