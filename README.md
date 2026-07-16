@@ -27,14 +27,21 @@ fails CI when reality drifts from it.
 
 ## Install
 
+Download a checksummed archive from the
+[latest GitHub release](https://github.com/Conalh/tofulock/releases/latest), or
+install from source:
+
 ```sh
-go install github.com/Conalh/tofulock@latest   # needs Go 1.23+
+go install github.com/Conalh/tofulock@latest   # needs Go 1.25+
 # or from a clone:
 go build -o tofulock .
 ```
 
 `git` must be on your `PATH` — tofulock uses `git ls-remote` to resolve refs to
-commits and never downloads module content during `lock`/`verify`.
+commits and never downloads module content during `lock`/`verify`. Remote Git
+sources must use HTTPS or SSH. Put HTTPS credentials in a Git credential helper
+and SSH keys in an agent; tofulock rejects URL passwords so secrets cannot be
+copied into lockfiles or attestations.
 
 ## Quickstart
 
@@ -56,8 +63,9 @@ OK: every locked module matches its recorded pin.
 ```
 
 `lock` writes `.tofulock.lock.json` (commit it). `verify` re-resolves every
-locked module and exits non-zero if a tag moved, a ref was re-pointed, or a
-constraint now selects a different version.
+locked module and exits non-zero if a tag moved, a ref was re-pointed, a
+constraint now selects a different version, or the source repository,
+subdirectory, or constraint changed without re-locking.
 
 ```sh
 tofulock list   [dir]                  # show module calls and their classified source kind
@@ -85,14 +93,22 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: Conalh/tofulock@v0.6.0
+      - uses: actions/checkout@v7
+      - uses: Conalh/tofulock@v0.6.1
         with:
           directory: .
 ```
 
 `verify` exits non-zero on drift; add `--json` (CLI) for a machine-readable
-report.
+report. The Action builds the source and dependency lockfile from the Action ref
+you selected; it does not download a second copy of tofulock. Pin the Action to
+a full commit SHA when your workflow requires immutable third-party Actions.
+
+> **Network boundary.** Module configuration is active network input:
+> `verify` contacts the declared Git remotes and registry hosts. For pull
+> requests from untrusted forks, use a GitHub-hosted or otherwise
+> network-isolated runner. Do not give that job access to an internal network or
+> long-lived credentials.
 
 ## OpenTofu
 

@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.5'
+          cache: true
+      - name: Confirm tag and CLI version agree
+        shell: bash
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          actual="$(go run . version | awk '{print $2}')"
+          test "$actual" = "$expected"
+      - run: go test ./...
+      - run: go vet ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.5'
+          cache: true
+      - name: Build archive
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          archive="tofulock_${version}_${GOOS}_${GOARCH}"
+          mkdir -p stage dist
+          binary=tofulock
+          if [ "$GOOS" = "windows" ]; then binary=tofulock.exe; fi
+          go build -trimpath -ldflags='-s -w' -o "stage/$binary" .
+          cp README.md LICENSE stage/
+          if [ "$GOOS" = "windows" ]; then
+            (cd stage && zip -q -r "../dist/$archive.zip" .)
+          else
+            tar -C stage -czf "dist/$archive.tar.gz" .
+          fi
+          (cd dist && sha256sum * > "$archive.sha256")
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Create experimental GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --repo "$GITHUB_REPOSITORY"
+          --title "tofulock $GITHUB_REF_NAME (experimental)"
+          --generate-notes
+          --prerelease

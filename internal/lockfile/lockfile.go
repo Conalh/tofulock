@@ -4,6 +4,7 @@ package lockfile
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -63,6 +64,9 @@ func Read(dir string) (*File, error) {
 	if err := json.Unmarshal(b, &f); err != nil {
 		return nil, err
 	}
+	if err := validate(&f); err != nil {
+		return nil, err
+	}
 	return &f, nil
 }
 
@@ -80,5 +84,18 @@ func ReadRaw(dir string) (*File, []byte, error) {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return nil, nil, err
 	}
+	if err := validate(&f); err != nil {
+		return nil, nil, err
+	}
 	return &f, raw, nil
+}
+
+func validate(f *File) error {
+	if f.Version != SchemaVersion {
+		return fmt.Errorf("unsupported tofulock schema version %d (expected %d)", f.Version, SchemaVersion)
+	}
+	if f.Tool != "tofulock" {
+		return fmt.Errorf("lockfile tool must be %q", "tofulock")
+	}
+	return nil
 }

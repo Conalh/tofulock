@@ -8,31 +8,33 @@ inputs:
     description: 'Directory containing the module config and .tofulock.lock.json'
     required: false
     default: '.'
-  version:
-    description: 'tofulock version to install (a release tag, or a branch like "main")'
-    required: false
-    default: 'v0.6.0'
   json:
     description: 'Emit machine-readable JSON output'
     required: false
     default: 'false'
   registry-host:
-    description: 'Registry for bare module addresses (OpenTofu users: registry.opentofu.org)'
+    description: 'Registry for bare module addresses; OpenTofu users typically choose registry.opentofu.org'
     required: false
     default: ''
 runs:
   using: 'composite'
   steps:
-    - uses: actions/setup-go@v6
+    - uses: actions/setup-go@v7
       with:
-        go-version: 'stable'
-    # Inputs are passed via env, not interpolated into the script, so a
-    # crafted input value can't inject shell commands.
-    - name: Install tofulock
+        go-version: '1.26.5'
+        cache-dependency-path: ${{ github.action_path }}/go.sum
+    - name: Build the pinned Action source
       shell: bash
-      env:
-        TOFULOCK_VERSION: ${{ inputs.version }}
-      run: go install "github.com/Conalh/tofulock@$TOFULOCK_VERSION"
+      working-directory: ${{ github.action_path }}
+      run: |
+        bin_dir="${RUNNER_TEMP//\\//}/tofulock-action"
+        mkdir -p "$bin_dir"
+        bin="$bin_dir/tofulock"
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          bin="$bin.exe"
+        fi
+        go build -trimpath -o "$bin" .
+        echo "TOFULOCK_BIN=$bin" >> "$GITHUB_ENV"
     - name: Verify module integrity
       shell: bash
       env:
@@ -41,7 +43,7 @@ runs:
         TOFULOCK_REGISTRY_HOST: ${{ inputs.registry-host }}
       run: |
         if [ "$TOFULOCK_JSON" = "true" ]; then
-          tofulock verify "$TOFULOCK_DIR" --json
+          "$TOFULOCK_BIN" verify "$TOFULOCK_DIR" --json
         else
-          tofulock verify "$TOFULOCK_DIR"
+          "$TOFULOCK_BIN" verify "$TOFULOCK_DIR"
         fi

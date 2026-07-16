@@ -6,16 +6,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/hashicorp/go-version"
 )
 
+// TerraformDefaultHost is the registry used by Terraform for bare module
+// addresses. OpenTofu callers can explicitly choose registry.opentofu.org.
+const TerraformDefaultHost = "registry.terraform.io"
+
 // DefaultHost is the registry used when a module address omits an explicit
-// host. Terraform and OpenTofu ship different defaults (registry.terraform.io
-// vs registry.opentofu.org); the CLI overrides this to match the tool in use.
-var DefaultHost = "registry.terraform.io"
+// host. The CLI resets it for each invocation before applying an override.
+var DefaultHost = TerraformDefaultHost
 
 const userAgent = "tofulock"
 
@@ -54,7 +58,25 @@ func ParseAddress(source string) (Address, error) {
 	default:
 		return Address{}, fmt.Errorf("not a registry address: %q", source)
 	}
+	if err := ValidateHost(addr.Host); err != nil {
+		return Address{}, err
+	}
 	return addr, nil
+}
+
+// ValidateHost accepts a bare DNS name or IP literal with an optional port.
+// Schemes, paths, credentials, and query fragments are rejected so a module
+// address cannot smuggle URL structure into registry requests.
+func ValidateHost(host string) error {
+	host = strings.TrimSpace(host)
+	if host == "" || strings.Contains(host, "://") || strings.ContainsAny(host, "/\\?#@\t\r\n ") {
+		return fmt.Errorf("registry host must be a bare hostname with an optional port")
+	}
+	u, err := url.Parse("https://" + host)
+	if err != nil || u.Host != host || u.Hostname() == "" {
+		return fmt.Errorf("registry host must be a bare hostname with an optional port")
+	}
+	return nil
 }
 
 // Resolution is the outcome of resolving a registry address + constraint.

@@ -132,6 +132,9 @@ func Sign(statement []byte, priv ed25519.PrivateKey) Envelope {
 // Verify checks that at least one signature is valid for pub and returns the
 // decoded payload (the statement bytes).
 func (e Envelope) Verify(pub ed25519.PublicKey) ([]byte, error) {
+	if e.PayloadType != PayloadType {
+		return nil, fmt.Errorf("unexpected DSSE payload type %q", e.PayloadType)
+	}
 	payload, err := base64.StdEncoding.DecodeString(e.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("decoding payload: %w", err)
@@ -147,6 +150,21 @@ func (e Envelope) Verify(pub ed25519.PublicKey) ([]byte, error) {
 		}
 	}
 	return nil, fmt.Errorf("no signature in the envelope is valid for the provided key")
+}
+
+// ValidateStatement confirms that a signed payload is the tofulock in-toto
+// statement shape that verify-attest promises to verify.
+func ValidateStatement(stmt *Statement) error {
+	if stmt.Type != StatementType {
+		return fmt.Errorf("unexpected in-toto statement type %q", stmt.Type)
+	}
+	if stmt.PredicateType != PredicateType {
+		return fmt.Errorf("unexpected predicate type %q", stmt.PredicateType)
+	}
+	if stmt.Predicate.Tool.Name != "tofulock" {
+		return fmt.Errorf("attestation tool must be %q", "tofulock")
+	}
+	return nil
 }
 
 // GenerateKey returns a fresh ed25519 keypair.

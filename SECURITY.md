@@ -41,5 +41,5 @@ Out of scope — by design (see [THREAT_MODEL.md](THREAT_MODEL.md)):
 
 ## Supported versions
 
-Only the latest `main` is supported while the project is experimental. There are
-no backported fixes for older tags.
+The latest tagged release and `main` are supported while the project is
+experimental. There are no backported fixes for older tags.

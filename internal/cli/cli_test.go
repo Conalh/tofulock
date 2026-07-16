@@ -40,6 +40,18 @@ func TestParseArgs(t *testing.T) {
 	}
 }
 
+func TestApplyRegistryHostValidatesAndResets(t *testing.T) {
+	if err := applyRegistryHost("registry.opentofu.org"); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyRegistryHost("https://registry.example.com"); err == nil {
+		t.Fatal("expected URL-shaped registry host to be rejected")
+	}
+	if err := applyRegistryHost(""); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSplitDir(t *testing.T) {
 	valueFlags := map[string]bool{"key": true}
 
@@ -145,6 +157,36 @@ func TestVerifyFlagsNewModule(t *testing.T) {
 	}
 	if code := cmdVerify(dir, false); code != 1 {
 		t.Errorf("verify exit = %d, want 1: a lockable module missing from the lockfile must fail", code)
+	}
+}
+
+func TestVerifyRejectsSubdirChangeAtSameCommit(t *testing.T) {
+	dir := t.TempDir()
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	lockedSource := "git::https://example.com/repo.git//modules/a?ref=" + sha
+	writeConfig(t, dir, "module \"pinned\" {\n  source = \""+lockedSource+"\"\n}\n")
+	if code := cmdLock(dir, false, false); code != 0 {
+		t.Fatalf("initial lock exit = %d", code)
+	}
+
+	changedSource := "git::https://example.com/repo.git//modules/b?ref=" + sha
+	writeConfig(t, dir, "module \"pinned\" {\n  source = \""+changedSource+"\"\n}\n")
+	if code := cmdVerify(dir, false); code != 1 {
+		t.Fatalf("verify exit = %d, want 1 for a subdirectory change at the same commit", code)
+	}
+}
+
+func TestVerifyRejectsSkippedModuleBecomingRemote(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "module \"app\" {\n  source = \"./modules/app\"\n}\n")
+	if code := cmdLock(dir, false, false); code != 0 {
+		t.Fatalf("initial lock exit = %d", code)
+	}
+
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	writeConfig(t, dir, "module \"app\" {\n  source = \"git::https://example.com/repo.git?ref="+sha+"\"\n}\n")
+	if code := cmdVerify(dir, false); code != 1 {
+		t.Fatalf("verify exit = %d, want 1 when a skipped local module becomes remote", code)
 	}
 }
 

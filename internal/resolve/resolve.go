@@ -6,6 +6,7 @@ package resolve
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -126,7 +127,94 @@ func ParseGit(source string) (GitSource, error) {
 	if base == "" {
 		return GitSource{}, fmt.Errorf("could not parse git source %q", source)
 	}
+	if err := validateCloneURL(base); err != nil {
+		return GitSource{}, err
+	}
 	return GitSource{CloneURL: base, Subdir: sub, Ref: ref}, nil
+}
+
+// SanitizeSource removes HTTP(S) userinfo and SSH URL passwords before a module
+// source is copied into a lockfile, error report, or attestation. Credentials
+// belong in a credential helper or SSH agent, never in provenance artifacts.
+func SanitizeSource(source string) string {
+	s := strings.TrimSpace(source)
+	prefix := ""
+	if strings.HasPrefix(s, "git::") {
+		prefix = "git::"
+		s = strings.TrimPrefix(s, prefix)
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.User == nil {
+		return source
+	}
+	switch u.Scheme {
+	case "http", "https":
+		u.User = nil
+	case "ssh":
+		if _, hasPassword := u.User.Password(); !hasPassword {
+			return source
+		}
+		u.User = url.User(u.User.Username())
+	default:
+		return source
+	}
+	return prefix + u.String()
+}
+
+// validateCloneURL limits Git resolution to authenticated HTTPS and SSH
+// transports. In particular, it rejects option-shaped repositories and Git's
+// ext/file helpers before an untrusted Terraform source reaches `git`.
+func validateCloneURL(cloneURL string) error {
+	if cloneURL == "" || strings.HasPrefix(cloneURL, "-") || strings.ContainsAny(cloneURL, "\x00\r\n") {
+		return fmt.Errorf("unsafe git clone URL")
+	}
+	if isSCPStyleSSH(cloneURL) {
+		return nil
+	}
+	u, err := url.Parse(cloneURL)
+	if err != nil || u.Hostname() == "" {
+		return fmt.Errorf("git clone URL must use HTTPS or SSH")
+	}
+	switch u.Scheme {
+	case "https":
+		if u.User != nil {
+			return fmt.Errorf("git HTTPS credentials must use a credential helper, not URL userinfo")
+		}
+	case "ssh":
+		if u.User != nil {
+			if _, hasPassword := u.User.Password(); hasPassword || !isSafeSSHIdentifier(u.User.Username()) {
+				return fmt.Errorf("git SSH URLs must use a safe username and an SSH agent, not a password")
+			}
+		}
+	default:
+		return fmt.Errorf("git clone URL must use HTTPS or SSH")
+	}
+	return nil
+}
+
+func isSCPStyleSSH(s string) bool {
+	at := strings.IndexByte(s, '@')
+	if at <= 0 || strings.ContainsAny(s, "\t\r\n ") {
+		return false
+	}
+	colonOffset := strings.IndexByte(s[at+1:], ':')
+	if colonOffset <= 0 {
+		return false
+	}
+	colon := at + 1 + colonOffset
+	return colon+1 < len(s) &&
+		isSafeSSHIdentifier(s[:at]) &&
+		isSafeSSHHost(s[at+1:colon])
+}
+
+func isSafeSSHIdentifier(s string) bool {
+	return s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-", r)
+	}) == -1
+}
+
+func isSafeSSHHost(s string) bool {
+	return isSafeSSHIdentifier(s) && !strings.HasPrefix(s, "-")
 }
 
 // splitSubdir separates a "//subdir" suffix from a URL, ignoring the "://"
@@ -146,6 +234,9 @@ func splitSubdir(s string) (base, sub string) {
 // using `git ls-remote` so no module content is downloaded. An empty ref
 // resolves the remote HEAD; a 40-hex ref is treated as already pinned.
 func GitCommit(cloneURL, ref string) (string, error) {
+	if err := validateCloneURL(cloneURL); err != nil {
+		return "", err
+	}
 	if isHex40(ref) {
 		return strings.ToLower(ref), nil
 	}
@@ -153,7 +244,7 @@ func GitCommit(cloneURL, ref string) (string, error) {
 	if query == "" {
 		query = "HEAD"
 	}
-	args := []string{"ls-remote", cloneURL,
+	args := []string{"ls-remote", "--", cloneURL,
 		query,
 		"refs/tags/" + ref,
 		"refs/heads/" + ref,
@@ -214,7 +305,7 @@ func isHex40(s string) bool {
 		return false
 	}
 	for _, r := range s {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
 			return false
 		}
 	}

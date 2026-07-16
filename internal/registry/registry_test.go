@@ -36,6 +36,22 @@ func TestParseAddress(t *testing.T) {
 	}
 }
 
+func TestValidateHostRejectsURLStructure(t *testing.T) {
+	for _, host := range []string{
+		"", "https://registry.example.com", "user@registry.example.com",
+		"registry.example.com/path", "registry.example.com?query=1", "registry.example.com value",
+	} {
+		if err := ValidateHost(host); err == nil {
+			t.Errorf("ValidateHost(%q) expected error", host)
+		}
+	}
+	for _, host := range []string{"registry.example.com", "registry.example.com:8443", "127.0.0.1:8443"} {
+		if err := ValidateHost(host); err != nil {
+			t.Errorf("ValidateHost(%q): %v", host, err)
+		}
+	}
+}
+
 func TestPickVersionAndDownload(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

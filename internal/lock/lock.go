@@ -17,7 +17,7 @@ import (
 // "error" status rather than returned, so a single bad module never aborts a
 // whole lock/verify run.
 func Module(c tfmod.Call) lockfile.Module {
-	m := lockfile.Module{Name: c.Name, Source: c.Source}
+	m := lockfile.Module{Name: c.Name, Source: resolve.SanitizeSource(c.Source)}
 	kind := resolve.Classify(c.Source)
 	m.Type = string(kind)
 

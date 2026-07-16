@@ -6,7 +6,7 @@ confusing" or "the threat model doesn't hold here."
 
 ## Prerequisites
 
-- **Go 1.23+**
+- **Go 1.25+**
 - **git** on your `PATH` (used for `git ls-remote`)
 
 ## Build, test, run
@@ -18,6 +18,7 @@ cd tofulock
 go build -o tofulock .      # build the CLI
 go vet ./...                # static checks
 go test ./...               # unit tests (no network)
+go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
 # try it end to end against the bundled example:
 ./tofulock lock   ./examples/basic
@@ -56,9 +57,9 @@ See [THREAT_MODEL.md](THREAT_MODEL.md) for the design's trust boundaries.
 - **New source types** should plug into `resolve.Classify` + `lock.Module` and
   come with tests. Keep network calls out of unit tests (use `httptest` or pure
   parsing tests).
-- Run `gofmt`, `go vet ./...`, and `go test ./...` before opening a PR. CI
-  enforces `gofmt -l` (no diffs) and `golangci-lint` (see `.golangci.yml`),
-  and runs the test suite on Ubuntu, Windows, and macOS.
+- Run `gofmt`, `go vet ./...`, `go test ./...`, and `govulncheck` before opening
+  a PR. CI enforces formatting and linting, checks the minimum supported Go
+  version, runs the race detector, and tests on Ubuntu, Windows, and macOS.
 
 ## Pull requests
 

@@ -125,6 +125,10 @@ func cmdVerifyAttest(rest []string) int {
 		fmt.Fprintf(os.Stderr, "tofulock: parsing statement: %v\n", err)
 		return 1
 	}
+	if err := attest.ValidateStatement(&stmt); err != nil {
+		fmt.Fprintf(os.Stderr, "tofulock: validating statement: %v\n", err)
+		return 1
+	}
 	fmt.Println("  signature ok")
 
 	lf, raw, err := lockfile.ReadRaw(dir)

@@ -81,6 +81,23 @@ func TestSignVerifyRoundTrip(t *testing.T) {
 	if _, err := good.Verify(otherPub); err == nil {
 		t.Error("expected verification to fail with wrong key")
 	}
+
+	wrongType := Sign(stmt, priv)
+	wrongType.PayloadType = "application/json"
+	if _, err := wrongType.Verify(pub); err == nil || !strings.Contains(err.Error(), "payload type") {
+		t.Errorf("wrong payload type error = %v", err)
+	}
+}
+
+func TestValidateStatementRejectsWrongDomain(t *testing.T) {
+	stmt := BuildStatement(sampleLockfile(), []byte("lockfile"), "test", "approver")
+	if err := ValidateStatement(stmt); err != nil {
+		t.Fatalf("valid statement rejected: %v", err)
+	}
+	stmt.PredicateType = "https://example.com/other"
+	if err := ValidateStatement(stmt); err == nil {
+		t.Fatal("expected foreign predicate type to be rejected")
+	}
 }
 
 func TestKeyPEMRoundTrip(t *testing.T) {

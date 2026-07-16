@@ -51,6 +51,19 @@ func TestModuleGitParseError(t *testing.T) {
 	}
 }
 
+func TestModuleDoesNotPersistHTTPGitCredentials(t *testing.T) {
+	m := Module(tfmod.Call{Name: "private", Source: "git::https://user:secret@example.com/repo.git?ref=" + hexRef})
+	if m.Status != "error" {
+		t.Fatalf("credential-bearing source status = %q, want error", m.Status)
+	}
+	if strings.Contains(m.Source, "user") || strings.Contains(m.Source, "secret") {
+		t.Fatalf("credential-bearing source leaked into lock entry: %q", m.Source)
+	}
+	if m.Source != "git::https://example.com/repo.git?ref="+hexRef {
+		t.Fatalf("sanitized source = %q", m.Source)
+	}
+}
+
 func TestModuleArchiveSkipped(t *testing.T) {
 	for _, src := range []string{
 		"s3::https://s3.amazonaws.com/bucket/vpc.zip",

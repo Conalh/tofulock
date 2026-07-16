@@ -20,7 +20,7 @@ import (
 )
 
 // Version is the tofulock release version.
-const Version = "0.6.0"
+const Version = "0.6.1"
 
 // Default attestation filenames.
 const (
@@ -41,21 +41,27 @@ func Run(args []string) int {
 		if err != nil {
 			return argErr(cmd, err)
 		}
-		applyRegistryHost(o.registryHost)
+		if err := applyRegistryHost(o.registryHost); err != nil {
+			return argErr(cmd, err)
+		}
 		return cmdList(o.dir)
 	case "lock":
 		o, err := parseArgs(rest)
 		if err != nil {
 			return argErr(cmd, err)
 		}
-		applyRegistryHost(o.registryHost)
+		if err := applyRegistryHost(o.registryHost); err != nil {
+			return argErr(cmd, err)
+		}
 		return cmdLock(o.dir, o.json, o.force)
 	case "verify":
 		o, err := parseArgs(rest)
 		if err != nil {
 			return argErr(cmd, err)
 		}
-		applyRegistryHost(o.registryHost)
+		if err := applyRegistryHost(o.registryHost); err != nil {
+			return argErr(cmd, err)
+		}
 		return cmdVerify(o.dir, o.json)
 	case "attest":
 		return cmdAttest(rest)
@@ -131,14 +137,19 @@ func parseArgs(rest []string) (o runOpts, err error) {
 // OpenTofu resolves bare addresses against registry.opentofu.org, so OpenTofu
 // users should set one of these — consistently for both lock and verify, or
 // verify may see version drift that tofu init would not.
-func applyRegistryHost(flagVal string) {
+func applyRegistryHost(flagVal string) error {
+	registry.DefaultHost = registry.TerraformDefaultHost
 	host := flagVal
 	if host == "" {
 		host = os.Getenv("TOFULOCK_REGISTRY_HOST")
 	}
 	if host != "" {
+		if err := registry.ValidateHost(host); err != nil {
+			return err
+		}
 		registry.DefaultHost = host
 	}
+	return nil
 }
 
 // splitDir separates the optional positional directory from flag args so flags

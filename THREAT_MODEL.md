@@ -30,6 +30,10 @@ when that resolution changes.
   good as key custody. There is no transparency log or identity binding yet.
 - **The lockfile is reviewed in version control.** tofulock makes drift visible
   in diffs and CI; a human/PR review is what turns visibility into a control.
+- **Verification can reach every declared remote.** Each Git source and module
+  registry host is contacted during resolution. Run untrusted configurations on
+  a network-isolated runner without internal network access or long-lived
+  credentials.
 
 ## Threats tofulock detects
 
@@ -39,6 +43,8 @@ when that resolution changes.
 | A **branch advances** under a `?ref=branch` pin          | same — the resolved commit no longer matches |
 | A **registry version is re-published** at a new commit   | `verify` re-resolves the version's download → commit and compares |
 | A **constraint silently selects a newer version**        | `verify` re-runs version selection and flags the change |
+| A source repository, subdirectory, or constraint changes while resolving to the same commit | `verify` compares the complete module identity, not only the commit |
+| A previously local/skipped source is changed to a remote source | `verify` rejects the type and source change instead of treating both states as skipped |
 | A module is **added/removed** without re-locking         | `verify` reports `NEW` / `REMOVED` |
 | **Tampering with the lockfile** after attestation        | `verify-attest` checks the recorded lockfile SHA-256 and per-subject commits against a signed record |
 
@@ -55,6 +61,9 @@ when that resolution changes.
   currently `skipped`, not content-hashed.
 - **Key/secret management.** You are responsible for protecting `*.key`.
 - **Compromise of the local toolchain** (a malicious `git`, Go, or CI runner).
+- **Network containment.** tofulock validates supported Git transports, but it
+  is not a sandbox or an egress policy. The runner controls which public or
+  private hosts can be reached.
 - **Policy decisions.** tofulock emits evidence and a drift gate; it does not
   decide what is permitted.
 

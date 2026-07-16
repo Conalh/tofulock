@@ -64,22 +64,46 @@ func cmdVerify(dir string, jsonOut bool) int {
 			problems++
 			continue
 		}
-		if want.Status != "locked" {
-			continue
-		}
-		checked++
-		e := verifyEntry{Name: want.Name, Kind: want.Type, Pin: pinLabel(want), LockedCommit: want.ResolvedCommit}
 		c, ok := current[want.Name]
 		if !ok {
-			e.Status, e.Detail = "removed", "present in lockfile, absent from config"
-			problems++
-			entries = append(entries, e)
+			if want.Status == "locked" {
+				entries = append(entries, verifyEntry{
+					Name: want.Name, Kind: want.Type, Status: "removed", Pin: pinLabel(want),
+					LockedCommit: want.ResolvedCommit, Detail: "present in lockfile, absent from config",
+				})
+				problems++
+			}
 			continue
 		}
 		got := lock.Module(c)
+		if want.Status != "locked" {
+			if got.Status == "error" {
+				entries = append(entries, verifyEntry{
+					Name: want.Name, Kind: got.Type, Status: "error",
+					Detail: "module changed since lock and now fails to resolve: " + got.Note,
+				})
+				problems++
+				continue
+			}
+			if got.Status == "locked" || got.Type != want.Type || got.Source != want.Source {
+				entries = append(entries, verifyEntry{
+					Name: want.Name, Kind: got.Type, Status: "drift",
+					Detail: "module source changed since lock; run `tofulock lock` to review the new pin",
+				})
+				problems++
+			}
+			continue
+		}
+
+		checked++
+		e := verifyEntry{Name: want.Name, Kind: want.Type, Pin: pinLabel(want), LockedCommit: want.ResolvedCommit}
 		switch {
 		case got.Status != "locked":
 			e.Status, e.Detail = "error", got.Note
+			problems++
+		case !sameModuleIdentity(got, want):
+			e.Status, e.CurrentCommit = "drift", got.ResolvedCommit
+			e.Detail = "module source, subdirectory, or constraint changed since lock"
 			problems++
 		case got.Version != want.Version:
 			e.Status, e.CurrentCommit = "drift", got.ResolvedCommit
@@ -128,6 +152,14 @@ func cmdVerify(dir string, jsonOut bool) int {
 	return 0
 }
 
+func sameModuleIdentity(got, want lockfile.Module) bool {
+	return got.Source == want.Source &&
+		got.Type == want.Type &&
+		got.Constraint == want.Constraint &&
+		got.CloneURL == want.CloneURL &&
+		got.Subdir == want.Subdir
+}
+
 func renderVerify(entries []verifyEntry, problems int) {
 	for _, e := range entries {
 		switch e.Status {
@@ -135,10 +167,11 @@ func renderVerify(entries []verifyEntry, problems int) {
 			fmt.Printf("  ok      %-22s %s @ %s\n", e.Name, e.Pin, short(e.LockedCommit))
 		case "drift":
 			fmt.Printf("  DRIFT   %-22s %s\n", e.Name, e.Pin)
-			if e.LockedCommit != "" && e.CurrentCommit != "" {
-				fmt.Printf("            locked %s\n            now    %s\n", e.LockedCommit, e.CurrentCommit)
-			} else {
+			if e.Detail != "" {
 				fmt.Printf("            %s\n", e.Detail)
+			}
+			if e.LockedCommit != "" && e.CurrentCommit != "" && e.LockedCommit != e.CurrentCommit {
+				fmt.Printf("            locked %s\n            now    %s\n", e.LockedCommit, e.CurrentCommit)
 			}
 		case "error":
 			fmt.Printf("  ERROR   %-22s %s\n", e.Name, e.Detail)

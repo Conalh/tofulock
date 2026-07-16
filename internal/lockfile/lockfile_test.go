@@ -54,3 +54,23 @@ func TestWriteIsDeterministic(t *testing.T) {
 		t.Error("lockfile output is not byte-stable across writes")
 	}
 }
+
+func TestReadRejectsUnknownSchemaAndTool(t *testing.T) {
+	for name, body := range map[string]string{
+		"schema": `{"version":99,"tool":"tofulock","modules":[]}`,
+		"tool":   `{"version":1,"tool":"other","modules":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, FileName), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Read(dir); err == nil {
+				t.Fatal("expected incompatible lockfile to be rejected")
+			}
+			if _, _, err := ReadRaw(dir); err == nil {
+				t.Fatal("expected ReadRaw to reject incompatible lockfile")
+			}
+		})
+	}
+}
