@@ -22,7 +22,7 @@ runs:
     - uses: actions/setup-go@v7
       with:
         go-version: '1.26.5'
-        cache-dependency-path: ${{ github.action_path }}/go.sum
+        cache: false
     - name: Build the pinned Action source
       shell: bash
       working-directory: ${{ github.action_path }}
